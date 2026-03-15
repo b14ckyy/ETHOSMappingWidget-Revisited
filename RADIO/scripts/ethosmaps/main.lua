@@ -250,7 +250,7 @@ local function bgtasks(widget)
     mapStatus.telemetry.lat = gpsData.lat
     mapStatus.telemetry.lon = gpsData.lon
 
-    -- NEW: GPS-Log nur bei echter Positionsänderung (wie du gewünscht hast)
+    -- NEW: GPS log only on actual position change
     if mapStatus and mapStatus.conf and mapStatus.conf.enableDebugLog and mapLibs and mapLibs.utils then
       local lat = mapStatus.telemetry.lat or 0
       local lon = mapStatus.telemetry.lon or 0
@@ -348,7 +348,7 @@ local function event(widget, category, value, x, y)
   -- Handles touch events (zoom in/out on right side of screen)
   local kill = false
 
-  -- NEW: Touch-Log (sicherer nil-Check für main.lua)
+  -- NEW: Touch log (safe nil check for main.lua)
   if mapStatus and mapStatus.conf and mapStatus.conf.enableDebugLog and mapLibs and mapLibs.utils and category == EVT_TOUCH then
     mapLibs.utils.logDebug("TOUCH", string.format("value=%d x=%d y=%d", value, x, y))
   end
@@ -415,7 +415,7 @@ local function create()
 
   initLibs()
 
-  -- NEW: Auffälliger Session-Start-Marker – nur einmal (Flag verhindert Doppelung)
+  -- NEW: Prominent session start marker - only once (flag prevents duplicate logging)
   if mapStatus.conf.enableDebugLog and mapLibs and mapLibs.utils and not mapStatus.sessionLogged then
     mapLibs.utils.logDebug("SETTINGS", "=== DEBUG SESSION STARTED ===")
     mapStatus.sessionLogged = true
@@ -676,7 +676,7 @@ local function configure(widget)
     function(value) 
       mapStatus.conf.enableDebugLog = value
       
-      -- NEW: Nur ENABLED loggen (DISABLED ist nicht möglich, wie du gesagt hast)
+      -- NEW: Only log ENABLED state (DISABLED cannot be logged after the fact)
       if mapLibs and mapLibs.utils and value then
         mapLibs.utils.logDebug("SETTINGS", "=== DEBUG LOG ENABLED ===")
       end
