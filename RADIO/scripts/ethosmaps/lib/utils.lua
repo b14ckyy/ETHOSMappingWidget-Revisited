@@ -61,7 +61,8 @@ end
 
 function utils.logDebug(category, message)
   -- NEW: Rollender Log mit 5000 Zeilen – löscht älteste 2000 (deine Idee)
-  if not status.conf.enableDebugLog then return end
+  -- Defensive guard: allow logger to be called before utils.init() without crashing
+  if not status or not status.conf or not status.conf.enableDebugLog then return end
 
   local now = getTime()
   if now - lastLogWrite < 10 then return end

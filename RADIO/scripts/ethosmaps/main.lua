@@ -100,6 +100,8 @@ local mapStatus = {
   mapLastLat = nil,   -- Dedicated for map throttling (does not interfere with COG)
   mapLastLon = nil,
   mapLastZoom = 0,
+  lastLoggedLat = 0,
+  lastLoggedLon = 0,
 
   avgSpeed = {
     lastSampleTime = nil,
@@ -255,13 +257,13 @@ local function bgtasks(widget)
       local lat = mapStatus.telemetry.lat or 0
       local lon = mapStatus.telemetry.lon or 0
     
-      if lat ~= (mapStatus.mapLastLat or 0) or lon ~= (mapStatus.mapLastLon or 0) then
+      if lat ~= (mapStatus.lastLoggedLat or 0) or lon ~= (mapStatus.lastLoggedLon or 0) then
         mapLibs.utils.logDebug("GPS", string.format("lat=%.6f lon=%.6f", lat, lon))
-        mapStatus.mapLastLat = lat
-        mapStatus.mapLastLon = lon
+        mapStatus.lastLoggedLat = lat
+        mapStatus.lastLoggedLon = lon
       end
     end
-    -- END NEW
+  -- END NEW
   end
 
   if mapStatus.telemetry.lat ~= nil and mapStatus.telemetry.lon ~= nil then
