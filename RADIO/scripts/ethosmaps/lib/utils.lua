@@ -117,6 +117,8 @@ function utils.logDebug(category, message)
   end
   -- END NEW
 
+end
+
 function utils.getSourceValue(name)
   -- Returns value of a telemetry source by name (caches source handle for performance)
   local src = sources[name]
