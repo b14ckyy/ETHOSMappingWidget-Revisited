@@ -39,8 +39,7 @@ end
 -- NEW: Debug Logger (Schritt 2)
 local debugFile = nil
 local debugLogPath = "/scripts/ethosmaps/debug.log"
-local maxLogLines = 1000
-local lastLogWrite = 0
+local maxLogLines = 5000
 
 -- NEW: Debug Line Count nur initialisieren, wenn Logging aktiviert ist
 local function initDebugLineCount()
@@ -64,10 +63,6 @@ function utils.logDebug(category, message)
   -- Defensive guard: allow logger to be called before utils.init() without crashing
   if not status or not status.conf or not status.conf.enableDebugLog then return end
 
-  local now = getTime()
-  if now - lastLogWrite < 10 then return end
-  lastLogWrite = now
-
   local timestamp = string.format("%02d:%02d:%02d.%02d",
     math.floor(now/360000)%24,
     math.floor(now/6000)%60,
@@ -86,34 +81,36 @@ function utils.logDebug(category, message)
   -- Zeilen zählen
   utils.debugLineCount = (utils.debugLineCount or 0) + 1
 
-    -- NEW: Streaming Rollover with temp file (Copilot suggestion – no full table in RAM)
-  if utils.debugLineCount >= 5000 then
-    local tmpPath = debugLogPath .. ".tmp"
+  -- NEW: Dynamischer Rollover – immer 30% der ältesten Zeilen löschen
+  if utils.debugLineCount >= maxLogLines then
+    local tmpPath  = debugLogPath .. ".tmp"
+    local backupPath = debugLogPath .. ".bak"
     
     local f  = io.open(debugLogPath, "r")
     local f2 = io.open(tmpPath, "w")
     
     if f and f2 then
       local lineIndex = 0
+      local deleteCount = math.floor(maxLogLines * 0.3)   -- 30% der Zeilen löschen
+      
       for line in f:lines() do
         lineIndex = lineIndex + 1
-        if lineIndex > 2000 then                -- skip oldest 2000 lines
+        if lineIndex > deleteCount then
           f2:write(line .. "\n")
         end
       end
       
-      -- Add rollover marker
-      f2:write("00:00:00.00 | SETTINGS | === DEBUG LOG ROLLED (oldest 2000 lines removed) ===\n")
+      f2:write("00:00:00.00 | SETTINGS | === DEBUG LOG ROLLED (oldest " .. deleteCount .. " lines removed) ===\n")
       
       f:close()
       f2:close()
       
-      -- Replace original file
-      os.remove(debugLogPath)
+      os.rename(debugLogPath, backupPath)
       os.rename(tmpPath, debugLogPath)
+      os.remove(backupPath)
     end
     
-    utils.debugLineCount = 3000   -- now we have ~3000 lines left
+    utils.debugLineCount = maxLogLines - math.floor(maxLogLines * 0.3)
   end
   -- END NEW
 

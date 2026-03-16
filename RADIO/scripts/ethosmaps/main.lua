@@ -671,20 +671,22 @@ local function configure(widget)
   line = form.addLine("Enable map grid")
   form.addBooleanField(line, nil, function() return mapStatus.conf.enableMapGrid end, function(value) mapStatus.conf.enableMapGrid = value end)
 
-  -- === DEBUG LOGGER SWITCH ===
+    -- === DEBUG LOGGER SWITCH ===
   line = form.addLine("Enable debug log")
   form.addBooleanField(line, nil, 
     function() return mapStatus.conf.enableDebugLog end, 
     function(value) 
       mapStatus.conf.enableDebugLog = value
       
-      -- NEW: Only log ENABLED state (DISABLED cannot be logged after the fact)
-      if mapLibs and mapLibs.utils and value then
-        mapLibs.utils.logDebug("SETTINGS", "=== DEBUG LOG ENABLED ===")
+      -- NEW: Line-Count syncronisieren, wenn Logging zur Laufzeit eingeschaltet wird
+      if value and mapLibs and mapLibs.utils then
+        mapLibs.utils.initDebugLineCount()
+        mapLibs.utils.logDebug("SETTINGS", "=== DEBUG SESSION STARTED ===")
       end
       -- END NEW
     end
   )
+
 
 end
 
