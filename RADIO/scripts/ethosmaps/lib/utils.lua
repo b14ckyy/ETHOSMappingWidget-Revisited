@@ -39,11 +39,11 @@ end
 -- NEW: Debug Logger (Schritt 2)
 local debugFile = nil
 local debugLogPath = "/scripts/ethosmaps/debug.log"
-local maxLogLines = 5000
+local maxLogLines = 100
 local lastLogWrite = 0
 
 -- NEW: Debug Line Count nur initialisieren, wenn Logging aktiviert ist
-local function initDebugLineCount()
+function utils.initDebugLineCount()     -- ← hier "local" entfernen
   if not status.conf.enableDebugLog then 
     utils.debugLineCount = 0
     return 
@@ -89,7 +89,7 @@ function utils.logDebug(category, message)
     local tmpPath  = debugLogPath .. ".tmp"
     local backupPath = debugLogPath .. ".bak"
     
-    local f  = io.open(debugLogPath, "r")
+        local f  = io.open(debugLogPath, "r")
     local f2 = io.open(tmpPath, "w")
     
     if f and f2 then
@@ -113,6 +113,13 @@ function utils.logDebug(category, message)
       os.remove(backupPath)
       
       utils.debugLineCount = maxLogLines - deleteCount + 1
+    else
+      -- Cleanup bei Fehler: offene Handles schließen + tmp-Datei löschen
+      if f then f:close() end
+      if f2 then 
+        f2:close() 
+        os.remove(tmpPath) 
+      end
     end
   end
   -- === ENDE STREAMING ROLLOVER ===
@@ -315,9 +322,13 @@ end
 function utils.init(param_status, param_libs)
   status = param_status
   libs = param_libs
-  -- NEW: Nur zählen, wenn Debugging wirklich eingeschaltet ist
-  initDebugLineCount()
+  
+  -- NEW: Line count initialization moved here (status is now guaranteed to exist)
+  if mapStatus and mapStatus.conf and mapStatus.conf.enableDebugLog then
+    initDebugLineCount()
+  end
   -- END NEW
+  
   return utils
 end
 

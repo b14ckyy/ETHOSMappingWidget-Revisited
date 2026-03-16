@@ -74,7 +74,7 @@ local mapStatus = {
     screenToggleChannelId = 0,
     screenWheelChannelId = 0,
     screenWheelChannelDelay = 20,
-    gpsFormat = 0, -- 0 = decimal, 1 = DMS
+    gpsFormat = 2, -- 1 = DMS, 2 = decimal
     -- Layout settings
     layout = 1,
   },
@@ -417,7 +417,7 @@ local function create()
 
   initLibs()
 
-  -- NEW: Auffälliger Session-Start-Marker – nur einmal (Flag verhindert Doppelung)
+  -- NEW: Prominent session start marker - only once (flag prevents duplicate logging)
   if mapStatus.conf.enableDebugLog and mapLibs and mapLibs.utils and not mapStatus.sessionLogged then
     mapLibs.utils.logDebug("SETTINGS", "=== DEBUG SESSION STARTED ===")
     mapStatus.sessionLogged = true
