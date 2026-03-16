@@ -680,7 +680,9 @@ local function configure(widget)
       
       -- NEW: Line-Count syncronisieren, wenn Logging zur Laufzeit eingeschaltet wird
       if value and mapLibs and mapLibs.utils then
-        mapLibs.utils.initDebugLineCount()
+        if mapLibs.utils.initDebugLineCount then
+          mapLibs.utils.initDebugLineCount()
+        end
         mapLibs.utils.logDebug("SETTINGS", "=== DEBUG SESSION STARTED ===")
       end
       -- END NEW
