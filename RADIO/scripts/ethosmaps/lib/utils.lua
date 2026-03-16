@@ -26,6 +26,7 @@ local libs = nil
 local alwaysOn = system.getSource({category=CATEGORY_ALWAYS_ON, member=1, options=0})
 local alwaysOff = system.getSource({category=0, member=1, options=0})
 local sources = {}
+local bitmaskCache = {}
 -- NEW: Globaler Zähler für die Log-Datei (Performance)
 utils.debugLineCount = 0
 -- END NEW
@@ -314,7 +315,7 @@ function utils.init(param_status, param_libs)
   status = param_status
   libs = param_libs
   -- NEW: Nur zählen, wenn Debugging wirklich eingeschaltet ist
-  initDebugLineCount()
+  utils.initDebugLineCount()
   -- END NEW
   return utils
 end

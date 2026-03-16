@@ -67,14 +67,6 @@ local drawOffsetY = 0
 local lastProcessCycle = getTime()
 local processCycle = 0
 
-local avgDistSamples = {}
-local avgDist = 0
-local avgDistSum = 0
-local avgDistSample = 0
-local avgDistSampleCount = 0
-local avgDistLastSampleTime = getTime()
-avgDistSamples[0] = 0
-
 local coord_to_tiles = nil
 local tiles_to_path = nil
 local MinLatitude = -85.05112878

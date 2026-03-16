@@ -88,7 +88,7 @@ function panel.draw(widget)
     lcd.drawFilledRectangle(0, 0, w, topH)
     lcd.drawFilledRectangle(0, h - bottomH, w, bottomH)
 
-    libs.drawLib.drawTopBar()
+    libs.drawLib.drawTopBar(widget)
 
     local overlayFont = (w < 450) and FONT_S or FONT_L
     lcd.font(overlayFont)

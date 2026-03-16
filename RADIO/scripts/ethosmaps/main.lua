@@ -204,7 +204,7 @@ local function checkSize(widget)
   mapStatus.widgetHeight = h
   mapStatus.scaleX = w / 800
   mapStatus.scaleY = h / 480
-  text_w, text_h = lcd.getTextSize("")
+  local text_w, text_h = lcd.getTextSize("")
   lcd.font(FONT_STD)
   lcd.drawText(w/2, (h - text_h)/2, w.." x "..h.." (scale "..string.format("%.2f",mapStatus.scaleX).."x"..string.format("%.2f",mapStatus.scaleY)..")", CENTERED)
   return true
@@ -297,8 +297,8 @@ local function bgtasks(widget)
   if bgclock % 4 == 2 then
     if mapStatus.telemetry.lat ~= nil and mapStatus.telemetry.lon ~= nil then
       if mapStatus.conf.gpsFormat == 1 then
-        mapStatus.telemetry.strLat = mapLibs.utils.decToDMSFull(mapStatus.telemetry.lat)
-        mapStatus.telemetry.strLon = mapLibs.utils.decToDMSFull(mapStatus.telemetry.lon, mapStatus.telemetry.lat)
+        mapStatus.telemetry.strLat = mapLibs.utils.decToDMSFull(mapStatus.telemetry.lat, false)
+        mapStatus.telemetry.strLon = mapLibs.utils.decToDMSFull(mapStatus.telemetry.lon, true)
       else
         mapStatus.telemetry.strLat = string.format("%.06f", mapStatus.telemetry.lat)
         mapStatus.telemetry.strLon = string.format("%.06f", mapStatus.telemetry.lon)
