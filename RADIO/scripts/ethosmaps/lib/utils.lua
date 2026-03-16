@@ -62,6 +62,7 @@ function utils.logDebug(category, message)
   -- Defensive guard: allow logger to be called before utils.init() without crashing
   if not status or not status.conf or not status.conf.enableDebugLog then return end
 
+  local now = getTime()
   local timestamp = string.format("%02d:%02d:%02d.%02d",
     math.floor(now/360000)%24,
     math.floor(now/6000)%60,
