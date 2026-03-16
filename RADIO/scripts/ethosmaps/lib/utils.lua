@@ -324,8 +324,8 @@ function utils.init(param_status, param_libs)
   libs = param_libs
   
   -- NEW: Line count initialization moved here (status is now guaranteed to exist)
-  if mapStatus and mapStatus.conf and mapStatus.conf.enableDebugLog then
-    initDebugLineCount()
+  if status and status.conf and status.conf.enableDebugLog then
+    utils.initDebugLineCount()
   end
   -- END NEW
   
