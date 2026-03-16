@@ -110,7 +110,7 @@ function utils.logDebug(category, message)
       os.remove(backupPath)
     end
     
-    utils.debugLineCount = maxLogLines - math.floor(maxLogLines * 0.3)
+    utils.debugLineCount = maxLogLines - math.floor(maxLogLines * 0.3) + 1
   end
   -- END NEW
 
