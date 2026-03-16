@@ -37,7 +37,6 @@ end
 -- END NEW
 
 -- NEW: Debug Logger (Schritt 2)
-local debugFile = nil
 local debugLogPath = "/scripts/ethosmaps/debug.log"
 local maxLogLines = 5000
 
