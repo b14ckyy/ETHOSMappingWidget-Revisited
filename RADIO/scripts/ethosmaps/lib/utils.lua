@@ -42,7 +42,7 @@ local debugLogPath = "/scripts/ethosmaps/debug.log"
 local maxLogLines = 5000
 
 -- NEW: Debug Line Count nur initialisieren, wenn Logging aktiviert ist
-local function initDebugLineCount()
+function utils.initDebugLineCount()
   if not status.conf.enableDebugLog then 
     utils.debugLineCount = 0
     return 
