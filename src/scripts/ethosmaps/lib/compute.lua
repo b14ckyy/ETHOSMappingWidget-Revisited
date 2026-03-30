@@ -27,15 +27,125 @@ local dirty = {}        -- { [dirtyKey] = true/false }
 
 -- ── results table (read-only for paint) ────────────────────
 local results = {
-  -- Phase 2+: populated by task functions
-  -- waypoints = { segments = {}, markers = {}, jumps = {}, rthLine = {} },
-  -- trail     = { segments = {} },
-  -- tileGrid  = { paths = {}, screenPositions = {} },
-  -- positions = { vehicleX, vehicleY, homeX, homeY },
-  -- scale     = { pixels, label },
-  -- bar       = { groundSpeed, heading, travelDist, homeDist },
-  -- sensors   = {},
+  waypoints = {
+    tpx     = {},     -- tile-pixel X per WP index
+    tpy     = {},     -- tile-pixel Y per WP index
+    homeTpx = nil,    -- home tile-pixel X (for RTH line)
+    homeTpy = nil,    -- home tile-pixel Y (for RTH line)
+    mLen    = 0,      -- mission length at last projection
+    mIdx    = 0,      -- mission index at last projection
+    level   = 0,      -- zoom level at last projection
+    valid   = false,  -- true when projection covers all WPs
+  },
 }
+
+-- ── WP action constants (mirrored from maplib.lua) ─────────
+local WP_ACT_WAYPOINT      = 1
+local WP_ACT_POSHOLD_TIME  = 3
+local WP_ACT_SET_POI       = 5
+local WP_ACT_LAND          = 8
+local TILES_SIZE            = 100
+
+local function wpHasPosition(action)
+  return action == WP_ACT_WAYPOINT
+      or action == WP_ACT_POSHOLD_TIME
+      or action == WP_ACT_LAND
+      or action == WP_ACT_SET_POI
+end
+
+-- ──────────────────────────────────────────────────────────────
+-- Task: Waypoint tile-pixel projection
+-- ──────────────────────────────────────────────────────────────
+-- Replaces the batched reprojection that was previously in
+-- drawWaypoints() inside paint(). Since wakeup() has no
+-- instruction limit, all WPs are projected in a single pass.
+-- ──────────────────────────────────────────────────────────────
+
+local function computeWpProjection(st, lb, res)
+  local wp = res.waypoints
+  local missionList = st.mspMissions
+  if not missionList or #missionList == 0 then
+    wp.valid = false
+    wp.mLen = 0
+    return
+  end
+
+  local mIdx = st.mspMissionIdx or 1
+  local mission = missionList[mIdx]
+  if not mission or #mission == 0 then
+    wp.valid = false
+    wp.mLen = 0
+    return
+  end
+
+  local level = st.mapZoomLevel or 0
+  local mLen = #mission
+  local coordToTiles = lb.mapLib and lb.mapLib.coord_to_tiles
+
+  if not coordToTiles then
+    wp.valid = false
+    return
+  end
+
+  local tpx = wp.tpx
+  local tpy = wp.tpy
+
+  -- Check if full reprojection is needed
+  local needsFull = (wp.level ~= level) or (wp.mIdx ~= mIdx)
+  local needsIncremental = (mLen > wp.mLen) and (wp.level == level) and (wp.mIdx == mIdx)
+
+  if needsFull then
+    -- Full reprojection — all WPs in one pass (no batching needed in wakeup)
+    for i = 1, mLen do
+      local w = mission[i]
+      if wpHasPosition(w.action) then
+        local tx, ty, ox, oy = coordToTiles(w.lat, w.lon, level)
+        tpx[i] = tx * TILES_SIZE + ox
+        tpy[i] = ty * TILES_SIZE + oy
+      else
+        tpx[i] = nil
+        tpy[i] = nil
+      end
+    end
+    -- Clear stale entries beyond mission length
+    for i = mLen + 1, #tpx do tpx[i] = nil end
+    for i = mLen + 1, #tpy do tpy[i] = nil end
+
+  elseif needsIncremental then
+    -- Incremental: only project newly-added WPs (download in progress)
+    for i = wp.mLen + 1, mLen do
+      local w = mission[i]
+      if w and wpHasPosition(w.action) then
+        local tx, ty, ox, oy = coordToTiles(w.lat, w.lon, level)
+        tpx[i] = tx * TILES_SIZE + ox
+        tpy[i] = ty * TILES_SIZE + oy
+      else
+        tpx[i] = nil
+        tpy[i] = nil
+      end
+    end
+
+  else
+    -- Nothing changed — keep existing projection
+    return
+  end
+
+  -- Pre-compute home tile-pixel position for RTH lines
+  local tel = st.telemetry
+  if tel and tel.homeLat and tel.homeLon then
+    local htx, hty, hox, hoy = coordToTiles(tel.homeLat, tel.homeLon, level)
+    wp.homeTpx = htx * TILES_SIZE + hox
+    wp.homeTpy = hty * TILES_SIZE + hoy
+  else
+    wp.homeTpx = nil
+    wp.homeTpy = nil
+  end
+
+  wp.mLen = mLen
+  wp.mIdx = mIdx
+  wp.level = level
+  wp.valid = true
+end
 
 -- ──────────────────────────────────────────────────────────────
 -- Task registry
@@ -116,14 +226,12 @@ function compute.init(param_status, param_libs)
   status = param_status
   libs = param_libs
 
-  -- Phase 2+: register concrete tasks here, e.g.:
-  -- compute.registerTask("wpLayout",  computeWpLayout,  "needsWpLayout")
-  -- compute.registerTask("trail",     computeTrail,     "needsTrailClip")
-  -- compute.registerTask("tileGrid",  computeTileGrid,  "needsTileGrid")
-  -- compute.registerTask("positions", computePositions, "needsPositions")
-  -- compute.registerTask("scale",     computeScale,     "needsScale")
-  -- compute.registerTask("bar",       computeBar,       "needsBarSnapshot")
-  -- compute.registerTask("sensors",   computeSensors,   "needsSensors")
+  -- Phase 2: WP tile-pixel projection (Mercator coordToTiles math)
+  compute.registerTask("wpProjection", computeWpProjection, "needsWpProjection")
+
+  -- Run all tasks on the first wakeup cycle — data may already be
+  -- published (e.g. MSP missions loaded before compute.init).
+  compute.setAllDirty()
 end
 
 return compute

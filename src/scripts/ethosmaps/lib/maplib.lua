@@ -72,15 +72,8 @@ local TRAIL_REPROJECT_BATCH = 15  -- max trail points to reproject per paint cyc
 local trailTpx = {}           -- cached tile-pixel X per waypoint slot
 local trailTpy = {}           -- cached tile-pixel Y per waypoint slot
 
--- Waypoint tile-pixel cache: avoids per-frame coordToTiles trig in drawWaypoints.
--- Invalidated on zoom change or mission switch (same pattern as trail cache).
-local wpCachedLevel = nil
-local wpCachedMIdx = nil
-local wpCachedMLen = nil
-local wpTpx = {}
-local wpTpy = {}
-local wpReprojectNext = nil   -- next index for batched full-reproject (nil = idle)
-local WP_REPROJECT_BATCH = 15 -- max WPs to reproject per paint cycle
+-- Waypoint tile-pixel cache now lives in compute.lua (Phase 2).
+-- drawWaypoints reads results via libs.compute.getResults().waypoints.
 
 -- Reusable flat arrays for waypoint screen positions (avoids per-frame table-of-tables).
 local wpScrX = {}
@@ -661,86 +654,17 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   local scaleY = status.scaleY or 1
   local wpR = max(floor(20 * min(scaleX, scaleY)), 10)  -- 40px diameter
 
-  local coordToTiles = mapLib.coord_to_tiles
   local clipLine = libs.drawLib.clipLine
   local computeOutCode = libs.drawLib.computeOutCode
   local margin = wpR + 20  -- viewport margin for clipping
 
-  -- Reproject waypoint tile-pixel cache.
-  -- Full reproject is spread across multiple frames (WP_REPROJECT_BATCH per cycle)
-  -- to stay within the ETHOS instruction budget on large missions.
-  -- Incremental path handles progressive download (1 new WP per frame).
+  -- Read pre-computed tile-pixel positions from compute.lua (wakeup).
+  -- Projection was moved out of paint() to avoid instruction-limit pressure.
+  local wpRes = libs.compute.getResults().waypoints
+  if not wpRes or not wpRes.valid then return end
+  local wpTpx = wpRes.tpx
+  local wpTpy = wpRes.tpy
   local mLen = #mission
-  local reprojectActive = false
-  if wpCachedLevel ~= level or wpCachedMIdx ~= mIdx then
-    -- Full reproject needed — start or continue batched reproject
-    if not wpReprojectNext or wpCachedLevel ~= level or wpCachedMIdx ~= mIdx then
-      -- New reproject request (zoom or mission changed)
-      wpReprojectNext = 1
-      wpCachedLevel = level
-      wpCachedMIdx = mIdx
-    end
-    local batchEnd = min(wpReprojectNext + WP_REPROJECT_BATCH - 1, mLen)
-    for i = wpReprojectNext, batchEnd do
-      local wp = mission[i]
-      if wpHasPosition(wp.action) then
-        local tx, ty, ox, oy = coordToTiles(wp.lat, wp.lon, level)
-        wpTpx[i] = tx * TILES_SIZE + ox
-        wpTpy[i] = ty * TILES_SIZE + oy
-      else
-        wpTpx[i] = nil
-        wpTpy[i] = nil
-      end
-    end
-    if batchEnd >= mLen then
-      -- Reproject complete
-      wpReprojectNext = nil
-      wpCachedMLen = mLen
-    else
-      -- More batches needed — skip drawing this frame
-      wpReprojectNext = batchEnd + 1
-      reprojectActive = true
-    end
-  elseif wpReprojectNext then
-    -- Continue a previously-started batched reproject (e.g. mission grew while reprojecting)
-    local batchEnd = min(wpReprojectNext + WP_REPROJECT_BATCH - 1, mLen)
-    for i = wpReprojectNext, batchEnd do
-      local wp = mission[i]
-      if wp and wpHasPosition(wp.action) then
-        local tx, ty, ox, oy = coordToTiles(wp.lat, wp.lon, level)
-        wpTpx[i] = tx * TILES_SIZE + ox
-        wpTpy[i] = ty * TILES_SIZE + oy
-      else
-        wpTpx[i] = nil
-        wpTpy[i] = nil
-      end
-    end
-    if batchEnd >= mLen then
-      wpReprojectNext = nil
-      wpCachedMLen = mLen
-    else
-      wpReprojectNext = batchEnd + 1
-      reprojectActive = true
-    end
-  elseif mLen > (wpCachedMLen or 0) then
-    -- Incremental: only project newly-added WPs (download in progress)
-    for i = (wpCachedMLen or 0) + 1, mLen do
-      local wp = mission[i]
-      if wp and wpHasPosition(wp.action) then
-        local tx, ty, ox, oy = coordToTiles(wp.lat, wp.lon, level)
-        wpTpx[i] = tx * TILES_SIZE + ox
-        wpTpy[i] = ty * TILES_SIZE + oy
-      else
-        wpTpx[i] = nil
-        wpTpy[i] = nil
-      end
-    end
-    wpCachedMLen = mLen
-  end
-
-  -- While a batched reproject is still in progress, skip WP rendering
-  -- (mixed old/new projections would look wrong). Completes in 2-3 frames.
-  if reprojectActive then return end
 
   -- Pass 0: Compute screen positions and determine dense mode.
   -- Dense mode (proximity + auto-dense) is resolved BEFORE any line drawing so
@@ -859,8 +783,6 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   local navNum = 0
   local curActiveWp = status.mspActiveWp or 0
   local lastNavIdx = nil  -- preceding navigable WP (for annotations)
-  local telemetry = status.telemetry
-  local hasHome = telemetry and telemetry.homeLat and telemetry.homeLon
   for i = 1, mLen do
     local wp = mission[i]
     local action = wp.action
@@ -911,11 +833,10 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     end
 
     -- RTH dashed line from preceding navigable WP to home point
-    if action == WP_ACT_RTH and lastNavIdx and scrX[lastNavIdx] and hasHome then
+    if action == WP_ACT_RTH and lastNavIdx and scrX[lastNavIdx] and wpRes.homeTpx then
       local sx, sy = scrX[lastNavIdx], scrY[lastNavIdx]
-      local htx, hty, hox, hoy = coordToTiles(telemetry.homeLat, telemetry.homeLon, level)
-      local homeSx = myScreenX + (htx - uav_tile_x) * TILES_SIZE + (hox - uav_offset_x) + renderOffsetX
-      local homeSy = myScreenY + (hty - uav_tile_y) * TILES_SIZE + (hoy - uav_offset_y) + renderOffsetY
+      local homeSx = baseX + wpRes.homeTpx
+      local homeSy = baseY + wpRes.homeTpy
       local lx1, ly1, lx2, ly2 = shortenLine(sx, sy, homeSx, homeSy, wpR)
       if lx1 then
         lcd.color(wpColorRth)
@@ -1451,15 +1372,12 @@ function mapLib.clearTrail()
   trailLastLon = nil
   trailCachedLevel = nil
   trailReprojectNext = nil
-  -- Also invalidate waypoint tile-pixel cache.
-  libs.resetLib.clearTable(wpTpx)
-  libs.resetLib.clearTable(wpTpy)
+  -- Also invalidate waypoint projection in compute.lua.
+  if libs and libs.compute then
+    libs.compute.setDirty("needsWpProjection")
+  end
   libs.resetLib.clearTable(wpScrX)
   libs.resetLib.clearTable(wpScrY)
-  wpCachedLevel = nil
-  wpCachedMIdx = nil
-  wpCachedMLen = nil
-  wpReprojectNext = nil
 end
 
 function mapLib.init(param_status, param_libs)

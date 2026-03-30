@@ -311,9 +311,8 @@ local scheduledRenderCount = 0
 local lastBarTickCs = 0
 local BAR_TICK_INTERVAL_CS = 100  -- centiseconds (1 second)
 
-local function markMapDirty()
-  mapStatus.mapRedrawPending = true
-end
+-- markMapDirty() is defined after mapLibs declaration (see below line ~480)
+-- so the closure can capture the local mapLibs table.
 
 local function resolveWidget(widget)
   -- ETHOS can invoke callbacks with a nil widget in some contexts (non-fullscreen,
@@ -474,6 +473,13 @@ local mapLibs = {
   utils      = nil,
   msp        = nil,
 }
+
+local function markMapDirty()
+  mapStatus.mapRedrawPending = true
+  if mapLibs and mapLibs.compute then
+    mapLibs.compute.setDirty("needsWpProjection")
+  end
+end
 
 function loadLib(name)
   -- Loads a library module from disk, injects shared state through init(), and returns the initialized library table.

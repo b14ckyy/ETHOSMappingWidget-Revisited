@@ -168,25 +168,30 @@ libs.compute.update(widget)
 local cr = libs.compute.getResults()  -- read-only access
 ```
 
-### Phase 2: Waypoint Pre-computation
+### Phase 2: Waypoint Tile-Pixel Projection ✅
 
-Move waypoint path construction out of `drawWaypoints()`:
+Move the Mercator tile-pixel reprojection (coordToTiles trig) out of `drawWaypoints()` in paint() into `compute.lua` / wakeup().
 
-| Function | From | To |
-|----------|------|----|
-| Screen coordinate projection for each WP | `maplib.getScreenCoordinates()` in paint | `compute.projectWaypoints()` in wakeup |
-| Path segment clipping (`clipLine`) | `maplib.drawWaypoints()` in paint | `compute.clipWpSegments()` in wakeup |
-| `shortenLine()` for WP markers | `maplib.drawWaypoints()` in paint | `compute.clipWpSegments()` in wakeup |
-| JUMP arc geometry | `maplib.drawWaypoints()` in paint | `compute.prepareJumpArcs()` in wakeup |
-| Dense mode layout decisions | `maplib.drawWaypoints()` in paint | `compute.layoutWpMarkers()` in wakeup |
+**What moved to compute.lua:**
+- Full and incremental WP tile-pixel projection (was batched `WP_REPROJECT_BATCH=15` per paint frame — now all WPs in one pass since wakeup() has no limit)
+- Home position tile-pixel projection for RTH dashed lines
+- Cache invalidation tracking (level, mIdx, mLen)
 
-**Result table:** `results.waypoints = { segments = {}, markers = {}, jumps = {}, rthLine = {} }`
+**What stayed in drawWaypoints() (paint):**
+- Pass 0: screen position from tile-pixel (`baseX + tpx[i]`), dense mode detection
+- Pass 1: path lines (shortenLine + clipLine + lcd.drawLine), JUMP connections
+- Pass 2: markers (drawWpMarker), SET_HEAD chevrons, JUMP iteration text, RTH dashed lines
 
-`drawWaypoints()` becomes a pure draw loop over pre-computed geometry.
+**Result table:** `results.waypoints = { tpx={}, tpy={}, homeTpx, homeTpy, mLen, mIdx, level, valid }`
 
-**Dirty flag:** Set when WP data changes (MSP download), zoom changes, or viewport pans.
+**Dirty flag:** `needsWpProjection` — set by `markMapDirty()` in main.lua (covers zoom, pan, MSP publish) and `clearTrail()` in maplib.lua.
 
-**Incremental optimization:** On pan (no zoom change), apply pixel delta to cached screen coordinates instead of full reprojection. Full recompute only on zoom change, tile boundary crossing, or WP data change.
+**Removed from maplib.lua:**
+- Module-level variables: `wpCachedLevel`, `wpCachedMIdx`, `wpCachedMLen`, `wpTpx`, `wpTpy`, `wpReprojectNext`, `WP_REPROJECT_BATCH`
+- Entire batched reprojection block (~70 LOC) in drawWaypoints()
+- `coordToTiles` call in RTH section (now uses pre-computed `wpRes.homeTpx/homeTpy`)
+
+**Integration:** drawWaypoints() reads `libs.compute.getResults().waypoints` and returns early if `valid == false`.
 
 ### Phase 3: Trail Pre-computation
 
