@@ -470,6 +470,7 @@ local mapLibs = {
   resetLib   = nil,
   tileLoader = nil,
   mapLib     = nil,
+  compute    = nil,
   utils      = nil,
   msp        = nil,
 }
@@ -491,6 +492,7 @@ local function initLibs()
   if mapLibs.resetLib == nil then mapLibs.resetLib = loadLib("resetLib") end
   if mapLibs.tileLoader == nil then mapLibs.tileLoader = loadLib("tileloader") end
   if mapLibs.mapLib == nil then mapLibs.mapLib = loadLib("maplib") end
+  if mapLibs.compute == nil then mapLibs.compute = loadLib("compute") end
   if mapLibs.msp == nil then mapLibs.msp = loadLib("msp") end
 end
 
@@ -1428,6 +1430,11 @@ local function wakeup(widget)
     -- Publish nav status for map rendering (active WP highlight, UAV color)
     mapStatus.mspNavMode  = mspState.navMode or 0
     mapStatus.mspActiveWp = mspState.activeWpNumber or 0
+  end
+
+  -- Run compute scheduler (Phase 1+: staggered task processing)
+  if mapLibs and mapLibs.compute then
+    mapLibs.compute.update(widget)
   end
 
   if mapLibs and mapLibs.tileLoader then
