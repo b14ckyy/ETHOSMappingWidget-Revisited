@@ -27,22 +27,22 @@ However, simply moving all computation into a single `wakeup()` call creates a n
 
 These principles guide every phase of the refactoring:
 
-### P1: Compute Scheduler — Staggered Workloads
+### P1: All Tasks, Every Cycle — Optimize Later
 
-Do NOT run all dirty computations in a single `wakeup()` call. Instead, implement a **priority-based task scheduler** that processes one or two tasks per cycle:
+`wakeup()` runs at only 2-3 Hz and has **no instruction limit**. Staggering tasks would starve computations (up to 2.5s for a LOW task). Instead:
 
-- **Task queue with priorities:** HIGH = tile grid + vehicle position (visible every frame), MEDIUM = waypoint layout + trail segments, LOW = sensor cache + scale bar + prefetch
-- **One-task-per-cycle default:** Each `wakeup()` picks the highest-priority dirty task, executes it, then yields. If wakeup still has budget (no preemption), it may process a second LOW task.
-- **Starvation prevention:** LOW tasks get promoted after N skipped cycles.
-- **Result:** Shorter wakeup cycles → faster paint → higher FPS. Computation spreads over 3-5 frames instead of spiking in one.
+- **Run ALL dirty tasks every `wakeup()` cycle.** This is what `paint()` was doing before — the same total work, just in a different callback.
+- **Individual dirty flags** per task: if a task's inputs haven't changed, skip it cheaply (one boolean check).
+- **Measure first, optimize later:** Add perf logging per task. Once we have real data from hardware, identify which tasks are actually expensive and apply targeted optimizations (caching, incremental deltas).
 
 ### P2: Avoid Redundant Computation
 
 Never recompute what hasn't changed:
 
-- **Input change detection:** Track a lightweight state fingerprint (zoom level, center tile X/Y, pixel offset, WP revision counter, trail write index). Skip the entire compute cycle when the fingerprint matches.
 - **Dirty flags per subsystem:** `needsTileGrid`, `needsWpLayout`, `needsTrailClip`, `needsBarSnapshot`, `needsScale`. Only set when the relevant input actually changes.
-- **Incremental/delta updates for pan:** When the viewport shifts by a few pixels (pan or tracking), apply a pixel offset to existing screen coordinates instead of full Mercator reprojection. Full reprojection only on zoom change or tile boundary crossing.
+- **Example:** No new GPS coordinates since last cycle → vehicle position is unchanged → skip reprojection, reuse last screen coordinates.
+- **Example:** Waypoints fully loaded and map hasn't moved → skip WP layout, reuse cached screen positions.
+- **Incremental/delta updates for pan (future):** When the viewport shifts by a few pixels (pan or tracking), apply a pixel offset to existing screen coordinates instead of full Mercator reprojection. Full reprojection only on zoom change or tile boundary crossing. This is a fine-tuning optimization for later.
 
 ### P3: Minimize Allocation — Table Reuse
 
@@ -116,24 +116,23 @@ I/O and cache management: **25% computation**, 0% rendering, 75% state managemen
 
 Responsibilities:
 - Owns a `compute.update(widget)` entry point called from `wakeup()` in `main.lua`
-- Implements the **priority-based task scheduler** (see Design Priorities P1)
+- Runs **all dirty tasks every cycle** — no staggering at 2-3 Hz (see P1)
 - Maintains pre-computed result tables that `paint()` reads (read-only during paint)
-- Tracks dirty flags per subsystem with input fingerprinting (see P2)
+- Tracks individual dirty flags per task — skips unchanged subsystems cheaply
 - Pre-allocates and reuses all result tables (see P3)
 
-Initial skeleton:
+Skeleton:
 ```lua
 local compute = {}
 local results = {}           -- shared read-only results for paint()
 local dirty = {}             -- per-subsystem dirty flags
-local fingerprint = {}       -- input state for change detection
-local skipCount = {}         -- starvation counters for LOW tasks
+local tasks = {}             -- { [i] = { name, fn, dirtyKey } }
+local taskCount = 0
 
--- Task registry: { name, priority, fn, dirtyKey }
-local tasks = {}
-
-local function registerTask(name, priority, fn, dirtyKey)
-    tasks[#tasks + 1] = { name = name, pri = priority, fn = fn, key = dirtyKey }
+function compute.registerTask(name, fn, dirtyKey)
+    taskCount = taskCount + 1
+    tasks[taskCount] = { name = name, fn = fn, key = dirtyKey }
+    dirty[dirtyKey] = false
 end
 
 function compute.setDirty(key)
@@ -141,10 +140,13 @@ function compute.setDirty(key)
 end
 
 function compute.update(widget)
-    -- 1. Check fingerprint — skip entirely if nothing changed
-    -- 2. Pick highest-priority dirty task, execute it
-    -- 3. If budget remains, pick one LOW task
-    -- 4. Increment skip counters, promote starved tasks
+    for i = 1, taskCount do
+        local t = tasks[i]
+        if dirty[t.key] then
+            t.fn(status, libs, results)
+            dirty[t.key] = false
+        end
+    end
 end
 
 function compute.getResults()
@@ -263,8 +265,8 @@ After all phases are stable and tested:
 ## Success Criteria
 
 - `paint()` uses < 15,000 instructions per frame (measured via checkpoint profiling)
-- `wakeup()` compute cycle completes within 1-2 tasks per call (no frame-rate regression)
+- `wakeup()` runs all compute tasks without measurable FPS regression (verified via perf window)
 - `pcall` wrapper removed
 - No visual regressions
 - No new garbage created in paint() hot path
-- No redundant recomputation when inputs are unchanged (verified via dirty-flag hit counters)
+- No redundant recomputation when inputs are unchanged (verified via dirty-flag hit counters in perf log)
