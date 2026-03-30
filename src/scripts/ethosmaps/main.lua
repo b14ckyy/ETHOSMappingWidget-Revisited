@@ -478,6 +478,7 @@ local function markMapDirty()
   mapStatus.mapRedrawPending = true
   if mapLibs and mapLibs.compute then
     mapLibs.compute.setDirty("needsWpProjection")
+    mapLibs.compute.setDirty("needsTrailProjection")
   end
 end
 

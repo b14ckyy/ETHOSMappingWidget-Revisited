@@ -37,6 +37,13 @@ local results = {
     level   = 0,      -- zoom level at last projection
     valid   = false,  -- true when projection covers all WPs
   },
+  trail = {
+    tpx     = {},     -- tile-pixel X per trail slot
+    tpy     = {},     -- tile-pixel Y per trail slot
+    level   = 0,      -- zoom level at last projection
+    wpCount = 0,      -- trail point count at last projection
+    valid   = false,  -- true when all trail points are projected
+  },
 }
 
 -- ── WP action constants (mirrored from maplib.lua) ─────────
@@ -148,6 +155,98 @@ local function computeWpProjection(st, lb, res)
 end
 
 -- ──────────────────────────────────────────────────────────────
+-- Task: Trail tile-pixel projection
+-- ──────────────────────────────────────────────────────────────
+-- Replaces the batched trail reprojection that was previously in
+-- drawMap() inside paint(). Since wakeup() has no instruction
+-- limit, all trail points are projected in a single pass.
+-- Trail data (ring-buffer) still lives in maplib.lua; we access
+-- it via mapLib.getTrailState().
+-- ──────────────────────────────────────────────────────────────
+
+local function computeTrailProjection(st, lb, res)
+  local tr = res.trail
+  local mapLib = lb and lb.mapLib
+  if not mapLib or not mapLib.getTrailState then
+    tr.valid = false
+    return
+  end
+
+  local trailState = mapLib.getTrailState()
+  local wpCount = trailState.wpCount
+  if wpCount == 0 then
+    tr.valid = false
+    tr.wpCount = 0
+    return
+  end
+
+  local level = st.mapZoomLevel or 0
+  local coordToTiles = mapLib.coord_to_tiles
+  if not coordToTiles then
+    tr.valid = false
+    return
+  end
+
+  local waypoints = trailState.waypoints
+  local head = trailState.head
+  local maxWp = trailState.maxWaypoints
+  local tpx = tr.tpx
+  local tpy = tr.tpy
+
+  -- Check if full reprojection is needed
+  local needsFull = (tr.level ~= level)
+  local needsIncremental = (wpCount > tr.wpCount) and (tr.level == level)
+
+  if needsFull then
+    -- Full reprojection — all trail points in one pass
+    for k = 1, wpCount do
+      local slot
+      if wpCount < maxWp then
+        slot = k
+      else
+        slot = ((head + k - 1) % maxWp) + 1
+      end
+      local wp = waypoints[slot]
+      if wp then
+        local tx, ty, ox, oy = coordToTiles(wp[1], wp[2], level)
+        tpx[slot] = tx * TILES_SIZE + ox
+        tpy[slot] = ty * TILES_SIZE + oy
+      end
+    end
+    -- Clear stale entries beyond trail size
+    for i = wpCount + 1, #tpx do tpx[i] = nil end
+    for i = wpCount + 1, #tpy do tpy[i] = nil end
+
+  elseif needsIncremental then
+    -- Incremental: only project newly-added trail points
+    -- New points have indices from (old wpCount+1) to wpCount in iteration order.
+    -- We need to project the new slot(s) that were added.
+    for k = tr.wpCount + 1, wpCount do
+      local slot
+      if wpCount < maxWp then
+        slot = k
+      else
+        slot = ((head + k - 1) % maxWp) + 1
+      end
+      local wp = waypoints[slot]
+      if wp then
+        local tx, ty, ox, oy = coordToTiles(wp[1], wp[2], level)
+        tpx[slot] = tx * TILES_SIZE + ox
+        tpy[slot] = ty * TILES_SIZE + oy
+      end
+    end
+
+  else
+    -- Nothing changed — keep existing projection
+    return
+  end
+
+  tr.wpCount = wpCount
+  tr.level = level
+  tr.valid = true
+end
+
+-- ──────────────────────────────────────────────────────────────
 -- Task registry
 -- ──────────────────────────────────────────────────────────────
 
@@ -228,6 +327,9 @@ function compute.init(param_status, param_libs)
 
   -- Phase 2: WP tile-pixel projection (Mercator coordToTiles math)
   compute.registerTask("wpProjection", computeWpProjection, "needsWpProjection")
+
+  -- Phase 3: Trail tile-pixel projection
+  compute.registerTask("trailProjection", computeTrailProjection, "needsTrailProjection")
 
   -- Run all tasks on the first wakeup cycle — data may already be
   -- published (e.g. MSP missions loaded before compute.init).
