@@ -19,6 +19,7 @@ local compute = {}
 -- ── shared refs (set in init) ──────────────────────────────
 local status   -- mapStatus
 local libs     -- mapLibs
+local widget   -- widget table (updated each compute.update call)
 
 -- ── task registry ──────────────────────────────────────────
 local tasks = {}        -- { [i] = { name, fn, dirtyKey } }
@@ -42,6 +43,7 @@ local results = {
     tpy     = {},     -- tile-pixel Y per trail slot
     level   = 0,      -- zoom level at last projection
     wpCount = 0,      -- trail point count at last projection
+    head    = 0,      -- ring-buffer head at last projection
     valid   = false,  -- true when all trail points are projected
   },
 }
@@ -196,6 +198,10 @@ local function computeTrailProjection(st, lb, res)
   -- Check if full reprojection is needed
   local needsFull = (tr.level ~= level)
   local needsIncremental = (wpCount > tr.wpCount) and (tr.level == level)
+  -- Ring-buffer wrap: wpCount stays at max, but head advances → the
+  -- overwritten slot has new GPS coords with a stale tile-pixel projection.
+  local needsHeadUpdate = (not needsFull) and (not needsIncremental)
+                          and (wpCount == tr.wpCount) and (head ~= tr.head)
 
   if needsFull then
     -- Full reprojection — all trail points in one pass
@@ -236,14 +242,40 @@ local function computeTrailProjection(st, lb, res)
       end
     end
 
+  elseif needsHeadUpdate then
+    -- Ring-buffer wrapped: re-project only the newly-overwritten head slot.
+    local wp = waypoints[head]
+    if wp then
+      local tx, ty, ox, oy = coordToTiles(wp[1], wp[2], level)
+      tpx[head] = tx * TILES_SIZE + ox
+      tpy[head] = ty * TILES_SIZE + oy
+    end
+
   else
     -- Nothing changed — keep existing projection
     return
   end
 
   tr.wpCount = wpCount
+  tr.head = head
   tr.level = level
   tr.valid = true
+end
+
+-- ──────────────────────────────────────────────────────────────
+-- Task: Tile grid computation
+-- ──────────────────────────────────────────────────────────────
+-- Moves the tile grid rebuild (coord_to_tiles → directional lead
+-- → loadAndCenterTiles → getScreenCoordinates → drawOffset) from
+-- drawMap()/paint() into wakeup(). mapLib.updateTileGrid() holds
+-- the actual logic; this task is just the scheduler wrapper.
+-- ──────────────────────────────────────────────────────────────
+
+local function computeTileGrid(st, lb, res)
+  local mapLib = lb and lb.mapLib
+  if not mapLib or not mapLib.updateTileGrid then return end
+  if not widget then return end
+  mapLib.updateTileGrid(widget)
 end
 
 -- ──────────────────────────────────────────────────────────────
@@ -283,7 +315,8 @@ end
 
 --- Main entry point. Called once per wakeup().
 --- Runs every task whose dirty flag is set, then clears it.
-function compute.update(widget)
+function compute.update(w)
+  widget = w  -- save for tasks that need the widget reference
   if taskCount == 0 then return end
 
   for i = 1, taskCount do
@@ -324,6 +357,10 @@ end
 function compute.init(param_status, param_libs)
   status = param_status
   libs = param_libs
+
+  -- Phase 4: Tile grid computation — runs first to configure projection
+  -- helpers (setupMaps) before any task that calls coord_to_tiles.
+  compute.registerTask("tileGrid", computeTileGrid, "needsTileGrid")
 
   -- Phase 2: WP tile-pixel projection (Mercator coordToTiles math)
   compute.registerTask("wpProjection", computeWpProjection, "needsWpProjection")

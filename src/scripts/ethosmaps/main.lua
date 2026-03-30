@@ -479,6 +479,7 @@ local function markMapDirty()
   if mapLibs and mapLibs.compute then
     mapLibs.compute.setDirty("needsWpProjection")
     mapLibs.compute.setDirty("needsTrailProjection")
+    mapLibs.compute.setDirty("needsTileGrid")
   end
 end
 
@@ -1219,13 +1220,17 @@ end
 local function menu(widget)
   -- Builds the widget context menu from the current telemetry state and dispatches actions back into shared status.
   if mapStatus.telemetry.lat ~= nil and mapStatus.telemetry.lon ~= nil then
-    return {
+    local items = {
       { "Maps: Reset", function() reset(widget) end },
       { "Maps: Set Home", function() setHome(widget) end },
       { "Maps: Set Default Position", function() setDefaultPosition(widget) end },
-      { "Maps: Zoom in", function() mapStatus.mapZoomLevel = min(mapStatus.conf.mapZoomMax, mapStatus.mapZoomLevel+1); markMapDirty() end},
-      { "Maps: Zoom out", function() mapStatus.mapZoomLevel = max(mapStatus.conf.mapZoomMin, mapStatus.mapZoomLevel-1); markMapDirty() end},
     }
+    -- Hide manual zoom when proportional channel control overrides it.
+    if mapStatus.conf.zoomControl ~= 2 then
+      items[#items+1] = { "Maps: Zoom in", function() mapStatus.mapZoomLevel = min(mapStatus.conf.mapZoomMax, mapStatus.mapZoomLevel+1); markMapDirty() end}
+      items[#items+1] = { "Maps: Zoom out", function() mapStatus.mapZoomLevel = max(mapStatus.conf.mapZoomMin, mapStatus.mapZoomLevel-1); markMapDirty() end}
+    end
+    return items
   end
   return { { "Maps: Reset", function() reset(widget) end } }
 end
@@ -1441,6 +1446,9 @@ local function wakeup(widget)
 
   -- Run compute scheduler (Phase 1+: staggered task processing)
   if mapLibs and mapLibs.compute then
+    -- Phase 4: tile grid must update every cycle (GPS, pan, heading change continuously).
+    -- loadAndCenterTiles has its own 25ms throttle to skip redundant rebuilds.
+    mapLibs.compute.setDirty("needsTileGrid")
     mapLibs.compute.update(widget)
   end
 
@@ -2182,7 +2190,6 @@ local function applyConfig()
   else
     local zMin = mapStatus.conf.mapZoomMin or 1
     local zMax = mapStatus.conf.mapZoomMax or 20
-    local def = mapStatus.conf.mapZoomDefault or 18
 
     local availableMin, availableMax = getAvailableZoomBounds(mapStatus.conf.mapProvider, mapStatus.conf.mapTypeId)
     if availableMin ~= nil and availableMax ~= nil then
@@ -2200,14 +2207,11 @@ local function applyConfig()
       zMax = zMin
       mapStatus.conf.mapZoomMax = zMax
     end
-    if def < zMin then
-      def = zMin
-    elseif def > zMax then
-      def = zMax
-    end
 
-    mapStatus.conf.mapZoomDefault = def
-    mapStatus.mapZoomLevel = def
+    -- Clamp current zoom into the effective range (never reset to a default).
+    local cur = mapStatus.mapZoomLevel or zMin
+    if cur < zMin then cur = zMin elseif cur > zMax then cur = zMax end
+    mapStatus.mapZoomLevel = cur
   end
 
   -- Refresh cached guard booleans so hot-path checks are a single boolean test.
@@ -2302,24 +2306,6 @@ local function configure(widget)
   widget.mapTypeField:enable(mapStatus.conf.mapProvider ~= 0)
   syncMapTypeChoicesForProvider(widget, mapStatus.conf.mapProvider, false)
 
-  line = form.addLine("Map zoom")
-  widget.mapZoomField = form.addNumberField(line, nil, 1, 20,
-    function()
-      widget.mapZoomField:enable(mapStatus.conf.mapProvider ~= 0)
-      return mapStatus.conf.mapZoomDefault
-    end,
-    function(value)
-      local min = mapStatus.conf.mapZoomMin or 1
-      local max = mapStatus.conf.mapZoomMax or 20
-      if value < min then
-        value = min
-      elseif value > max then
-        value = max
-      end
-      mapStatus.conf.mapZoomDefault = value
-    end
-  )
-
   line = form.addLine("Map zoom max")
   widget.mapZoomMaxField = form.addNumberField(line, nil, 1, 20,
     function()
@@ -2327,22 +2313,15 @@ local function configure(widget)
       return mapStatus.conf.mapZoomMax
     end,
     function(value)
-      -- Keep unified zoom range valid and clamp default zoom into that range.
+      -- Keep unified zoom range valid and clamp current zoom into that range.
       local min = mapStatus.conf.mapZoomMin or 1
       if value < min then
         value = min
       end
       mapStatus.conf.mapZoomMax = value
-      local def = mapStatus.conf.mapZoomDefault
-      if def == nil then
-        def = value
+      if mapStatus.mapZoomLevel > value then
+        mapStatus.mapZoomLevel = value
       end
-      if def < min then
-        def = min
-      elseif def > value then
-        def = value
-      end
-      mapStatus.conf.mapZoomDefault = def
     end
   )
 
@@ -2353,22 +2332,15 @@ local function configure(widget)
       return mapStatus.conf.mapZoomMin
     end,
     function(value)
-      -- Keep unified zoom range valid and clamp default zoom into that range.
+      -- Keep unified zoom range valid and clamp current zoom into that range.
       local max = mapStatus.conf.mapZoomMax or 20
       if value > max then
         value = max
       end
       mapStatus.conf.mapZoomMin = value
-      local def = mapStatus.conf.mapZoomDefault
-      if def == nil then
-        def = value
+      if mapStatus.mapZoomLevel < value then
+        mapStatus.mapZoomLevel = value
       end
-      if def < value then
-        def = value
-      elseif def > max then
-        def = max
-      end
-      mapStatus.conf.mapZoomDefault = def
     end
   )
 
@@ -2622,6 +2594,10 @@ local function read(widget)
   mapStatus.conf.defaultLat = storageToConfig("defaultLat", nil)
   mapStatus.conf.defaultLon = storageToConfig("defaultLon", nil)
 
+  -- Restore persisted zoom level (appended at end to keep positional storage compatible).
+  local savedZoom = tonumber(storageToConfig("mapZoomLevel", nil))
+  mapStatus.mapZoomLevel = savedZoom or mapStatus.conf.mapZoomDefault or 18
+
   applyConfig()
 end
 
@@ -2666,6 +2642,9 @@ local function write(widget)
   -- Default position persistence
   storage.write("defaultLat", mapStatus.conf.defaultLat)
   storage.write("defaultLon", mapStatus.conf.defaultLon)
+
+  -- Persisted zoom level (appended at end to keep positional storage compatible).
+  storage.write("mapZoomLevel", mapStatus.mapZoomLevel)
 
   applyConfig()
   mapLibs.resetLib.resetLayout(widget)
