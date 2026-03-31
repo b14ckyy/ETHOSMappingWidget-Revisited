@@ -71,7 +71,7 @@ local PAN_GRACE    = 2
 local PAN_PENDING  = 3
 
 -- Pan timing constants (centiseconds)
-local PAN_TOUCH_TIMEOUT_CS   = 20   -- 200ms: no touch events → finger up
+local PAN_TOUCH_TIMEOUT_CS   = 50   -- 500ms: no touch events → finger up
 local PAN_GRACE_DURATION_CS  = 500  -- 5s: grace period before auto-recenter
 
 -- Minimum height tolerance for fullscreen panning detection.
@@ -184,6 +184,7 @@ local mapStatus = {
   cachedProviderChoices = nil,
   cachedMapTypeChoices = {},  -- keyed by provider
   consumeZoomRelease = false,
+  menuOpenedAt = nil,        -- getTime() when menu() was called (event guard)
 
   -- Pan state for drag-to-pan (touch panning)
   panState = 0,             -- PAN_IDLE
@@ -823,6 +824,18 @@ local function event(widget, category, value, x, y)
   widget = resolveWidget(widget)
 
   if category == EVT_TOUCH and x ~= nil and y ~= nil then
+    -- Menu guard: while the ETHOS popup menu is open, pass all touch events
+    -- through so the pan state machine doesn't consume menu scroll/tap events.
+    -- Cleared when a menu callback fires; 3-second safety timeout in case the
+    -- user dismisses the menu without selecting an item.
+    if mapStatus.menuOpenedAt then
+      if (getTime() - mapStatus.menuOpenedAt) > 300 then
+        mapStatus.menuOpenedAt = nil  -- safety timeout (3 s)
+      else
+        return false
+      end
+    end
+
     if perfActive then
       perfInc("touch_events", 1)
     end
@@ -832,10 +845,6 @@ local function event(widget, category, value, x, y)
       mapStatus.widgetHeight = h
       mapStatus.scaleX = w / 800
       mapStatus.scaleY = h / 480
-    end
-
-    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
-      mapLibs.utils.logDebug("TOUCH", fmt("value=%s x=%s y=%s pan=%d", tostring(value), tostring(x), tostring(y), mapStatus.panState))
     end
 
     -- Button geometry (same as layout_default.lua)
@@ -1080,18 +1089,24 @@ local function event(widget, category, value, x, y)
         mapStatus.consumeZoomRelease = true
         if panState == PAN_GRACE then
           -- Zoom during grace: keep pan position, restart grace timer
-          -- Zoom out halves Mercator pixels → scale offset by 0.5
+          -- Zoom out halves Mercator pixels → scale anchor+offset by 0.5
           mapStatus.panOffsetX = floor(mapStatus.panOffsetX / 2)
           mapStatus.panOffsetY = floor(mapStatus.panOffsetY / 2)
+          if mapStatus.panAnchorPixelX then
+            mapStatus.panAnchorPixelX = floor(mapStatus.panAnchorPixelX / 2)
+            mapStatus.panAnchorPixelY = floor(mapStatus.panAnchorPixelY / 2)
+          end
           mapStatus.panGraceEnd = getTime() + PAN_GRACE_DURATION_CS
-          mapStatus.panAnchorPixelX = nil  -- recalculate anchor at new zoom
           mapStatus.lastPanOffsetX = nil
           mapStatus.lastPanOffsetY = nil
         elseif panState == PAN_IDLE and not mapStatus.followLock then
-          -- Detached idle: scale offset like grace, nil anchor for recalc
+          -- Detached idle: scale anchor+offset for new zoom level
           mapStatus.panOffsetX = floor(mapStatus.panOffsetX / 2)
           mapStatus.panOffsetY = floor(mapStatus.panOffsetY / 2)
-          mapStatus.panAnchorPixelX = nil
+          if mapStatus.panAnchorPixelX then
+            mapStatus.panAnchorPixelX = floor(mapStatus.panAnchorPixelX / 2)
+            mapStatus.panAnchorPixelY = floor(mapStatus.panAnchorPixelY / 2)
+          end
           mapStatus.lastPanOffsetX = nil
           mapStatus.lastPanOffsetY = nil
         elseif panState ~= PAN_IDLE then
@@ -1127,18 +1142,24 @@ local function event(widget, category, value, x, y)
         mapStatus.consumeZoomRelease = true
         if panState == PAN_GRACE then
           -- Zoom during grace: keep pan position, restart grace timer
-          -- Zoom in doubles Mercator pixels → scale offset by 2
+          -- Zoom in doubles Mercator pixels → scale anchor+offset by 2
           mapStatus.panOffsetX = mapStatus.panOffsetX * 2
           mapStatus.panOffsetY = mapStatus.panOffsetY * 2
+          if mapStatus.panAnchorPixelX then
+            mapStatus.panAnchorPixelX = mapStatus.panAnchorPixelX * 2
+            mapStatus.panAnchorPixelY = mapStatus.panAnchorPixelY * 2
+          end
           mapStatus.panGraceEnd = getTime() + PAN_GRACE_DURATION_CS
-          mapStatus.panAnchorPixelX = nil  -- recalculate anchor at new zoom
           mapStatus.lastPanOffsetX = nil
           mapStatus.lastPanOffsetY = nil
         elseif panState == PAN_IDLE and not mapStatus.followLock then
-          -- Detached idle: scale offset like grace, nil anchor for recalc
+          -- Detached idle: scale anchor+offset for new zoom level
           mapStatus.panOffsetX = mapStatus.panOffsetX * 2
           mapStatus.panOffsetY = mapStatus.panOffsetY * 2
-          mapStatus.panAnchorPixelX = nil
+          if mapStatus.panAnchorPixelX then
+            mapStatus.panAnchorPixelX = mapStatus.panAnchorPixelX * 2
+            mapStatus.panAnchorPixelY = mapStatus.panAnchorPixelY * 2
+          end
           mapStatus.lastPanOffsetX = nil
           mapStatus.lastPanOffsetY = nil
         elseif panState ~= PAN_IDLE then
@@ -1239,22 +1260,34 @@ local function setDefaultPosition(widget)
   end
 end
 
+local function menuDismissed()
+  mapStatus.menuOpenedAt = nil
+end
+
 local function menu(widget)
   -- Builds the widget context menu from the current telemetry state and dispatches actions back into shared status.
+  -- Record open time so event() can pass all touch events through while
+  -- the ETHOS popup is active (prevents pan state machine from consuming
+  -- menu scroll/tap events, which caused per-frame menu blinking).
+  mapStatus.menuOpenedAt = getTime()
+  -- Reset PAN_PENDING so stale state from the long-press doesn't linger.
+  if mapStatus.panState == PAN_PENDING then
+    mapStatus.panState = PAN_IDLE
+  end
   if mapStatus.telemetry.lat ~= nil and mapStatus.telemetry.lon ~= nil then
     local items = {
-      { "Maps: Reset", function() reset(widget) end },
-      { "Maps: Set Home", function() setHome(widget) end },
-      { "Maps: Set Default Position", function() setDefaultPosition(widget) end },
+      { "Maps: Reset", function() menuDismissed(); reset(widget) end },
+      { "Maps: Set Home", function() menuDismissed(); setHome(widget) end },
+      { "Maps: Set Default Position", function() menuDismissed(); setDefaultPosition(widget) end },
     }
     -- Hide manual zoom when proportional channel control overrides it.
     if mapStatus.conf.zoomControl ~= 2 then
-      items[#items+1] = { "Maps: Zoom in", function() mapStatus.mapZoomLevel = min(tonumber(mapStatus.conf.mapZoomMax) or 20, (tonumber(mapStatus.mapZoomLevel) or 1)+1); markMapDirty() end}
-      items[#items+1] = { "Maps: Zoom out", function() mapStatus.mapZoomLevel = max(tonumber(mapStatus.conf.mapZoomMin) or 1, (tonumber(mapStatus.mapZoomLevel) or 1)-1); markMapDirty() end}
+      items[#items+1] = { "Maps: Zoom in", function() menuDismissed(); mapStatus.mapZoomLevel = min(tonumber(mapStatus.conf.mapZoomMax) or 20, (tonumber(mapStatus.mapZoomLevel) or 1)+1); markMapDirty() end}
+      items[#items+1] = { "Maps: Zoom out", function() menuDismissed(); mapStatus.mapZoomLevel = max(tonumber(mapStatus.conf.mapZoomMin) or 1, (tonumber(mapStatus.mapZoomLevel) or 1)-1); markMapDirty() end}
     end
     return items
   end
-  return { { "Maps: Reset", function() reset(widget) end } }
+  return { { "Maps: Reset", function() menuDismissed(); reset(widget) end } }
 end
 
 local function wakeupInner(widget)
@@ -1371,7 +1404,41 @@ local function wakeupInner(widget)
         -- Apply pending zoom after 2 seconds of no change
         if mapStatus.zoomControlTarget ~= nil and mapStatus.zoomControlTarget ~= mapStatus.mapZoomLevel then
           if (now - mapStatus.zoomControlTimer) >= 200 then  -- 200 centiseconds = 2 seconds
-            mapStatus.mapZoomLevel = mapStatus.zoomControlTarget
+            local oldLevel = mapStatus.mapZoomLevel
+            local newLevel = mapStatus.zoomControlTarget
+            local delta = newLevel - oldLevel  -- positive = zoom in, negative = zoom out
+
+            -- Scale pan anchor + offset to keep the viewport at the same
+            -- geographic position.  Each zoom level doubles Mercator pixels,
+            -- so the scale factor is 2^delta.
+            local panState = mapStatus.panState
+            local isPanOrDetached = (panState == PAN_GRACE or panState == PAN_DRAGGING)
+              or (panState == PAN_IDLE and not mapStatus.followLock)
+            if isPanOrDetached then
+              if delta > 0 then
+                -- Zoom in: multiply by 2^delta
+                local scale = 2 ^ delta  -- e.g. delta=3 → scale=8
+                mapStatus.panOffsetX = floor(mapStatus.panOffsetX * scale)
+                mapStatus.panOffsetY = floor(mapStatus.panOffsetY * scale)
+                if mapStatus.panAnchorPixelX then
+                  mapStatus.panAnchorPixelX = floor(mapStatus.panAnchorPixelX * scale)
+                  mapStatus.panAnchorPixelY = floor(mapStatus.panAnchorPixelY * scale)
+                end
+              elseif delta < 0 then
+                -- Zoom out: divide by 2^|delta|
+                local scale = 2 ^ (-delta)  -- e.g. delta=-3 → scale=8
+                mapStatus.panOffsetX = floor(mapStatus.panOffsetX / scale)
+                mapStatus.panOffsetY = floor(mapStatus.panOffsetY / scale)
+                if mapStatus.panAnchorPixelX then
+                  mapStatus.panAnchorPixelX = floor(mapStatus.panAnchorPixelX / scale)
+                  mapStatus.panAnchorPixelY = floor(mapStatus.panAnchorPixelY / scale)
+                end
+              end
+              mapStatus.lastPanOffsetX = nil
+              mapStatus.lastPanOffsetY = nil
+            end
+
+            mapStatus.mapZoomLevel = newLevel
             mapStatus.zoomControlTarget = nil
             markMapDirty()
           end
@@ -1480,6 +1547,15 @@ local function wakeupInner(widget)
     mapLibs.compute.setDirty("needsTileGrid")
     mapLibs.compute.update(widget)
   end
+
+  -- Snapshot pan state AFTER compute (updateTileGrid) has finished.
+  -- paint() reads this snapshot so its flags (skipOverlays, isPanning,
+  -- renderOffset clamping) are guaranteed to match the panState that
+  -- updateTileGrid used to compute drawOffsetX/Y and myScreenX/Y.
+  -- Without this, an event() firing between wakeup and paint would give
+  -- paint a different panState, causing 1-frame overlay flashes and
+  -- tile position jumps.
+  if widget then widget.panStateSnapshot = mapStatus.panState end
 
   if mapLibs and mapLibs.tileLoader then
     if mapLibs.tileLoader.getQueueLength() > 0 then

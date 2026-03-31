@@ -36,7 +36,7 @@ local libs = nil
 
 -- Debug logger state shared by rollover and write helpers.
 local debugLogPath = "/scripts/ethosmaps/debug.log"
-local maxLogLines = 1000
+local maxLogLines = 2000
 local maxScanLines = 8000      -- Safety cap for line-by-line scans to avoid ETHOS instruction-limit aborts.
 local lastLogWrite = 0
 local logFlushInterval = 100   -- Flush buffered log lines every 1 second (centiseconds).
