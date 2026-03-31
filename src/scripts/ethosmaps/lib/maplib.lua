@@ -1106,15 +1106,19 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
     local uavOutCode = libs.drawLib.computeOutCode(drawX, drawY, x + vehicleR, y + vehicleR, x + w - vehicleR, y + h - vehicleR)
     if uavOutCode == 0 then
       -- UAV is inside the viewport: draw normal vehicle marker
-      -- Nav-aware coloring: green for NAV/HOLD, orange for RTH, white default
+      -- Nav-aware coloring: green for NAV/HOLD, orange for RTH, red for telemetry lost, white default
       local uavFillColor = nil
-      local nm = status.mspNavMode or 0
-      if nm == 3 or nm == 1 then
-        ensureWpColors()
-        uavFillColor = wpColorActive   -- neon green
-      elseif nm == 2 then
-        ensureWpColors()
-        uavFillColor = wpColorUavRth   -- orange
+      if status.telemetryLost then
+        uavFillColor = RED
+      else
+        local nm = status.mspNavMode or 0
+        if nm == 3 or nm == 1 then
+          ensureWpColors()
+          uavFillColor = wpColorActive   -- neon green
+        elseif nm == 2 then
+          ensureWpColors()
+          uavFillColor = wpColorUavRth   -- orange
+        end
       end
       if heading ~= nil then
         libs.drawLib.drawVehicle(drawX, drawY, vehicleR, heading, status.conf.uavSymbol, uavFillColor)

@@ -4,6 +4,46 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
+## 2.1-dev (2026-03-31)
+
+### Added
+- **GPS telemetry-lost detection**: if lat/lon stop changing for 5 seconds, telemetry is flagged as lost
+- **Telemetry-lost visual indicators**: UAV symbol turns red, GPS coordinate overlay turns red when telemetry lost
+- **Semi-transparent vehicle shadows**: Arrow and Airplane symbols now use `drawFilledTriangle` backdrops instead of hard black outlines (same 40% alpha as Multirotor propellers)
+- **compute.lua scheduler**: offloads WP projection, trail tile-pixel, tile grid math, and observation marker from paint() to wakeup() (Phases 1–5)
+- **Perf profiling system**: per-task ms counters, compute tasks run/skipped, MSP wp/s and error counters
+- **File-based state persistence**: zoom level, observation marker, default position stored in `state.dat` to avoid ETHOS storage buffer overflow (issue #5462)
+- **Decoupled STORAGE_SCHEMA from WIDGET_VERSION**: minor releases no longer require settings reset
+
+### Changed
+- **Airplane shadow**: 3-triangle fill matching wing silhouette (nose + left/right wing caps) with blunt wing tips
+- **Arrow shadow**: 2-triangle filled chevron, 2px larger than fill wireframe
+- **GPS/zoom overlay font size**: restored to `FONT_STD` (normal) / `FONT_S` (compact) — fixes regression from dead-code cleanup that shrank overlays
+- Trail accumulation moved from paint() drawMap to `mapLib.updateTrail()` in wakeup()
+- Home and observation marker tile-pixel pre-computed in `computeTileGrid()`
+- Inline outCode closure in `clipLine()` to save ~1500 VM opcodes/frame
+- Bootstrap `updateTileGrid` skips frame instead of running in paint()
+- WP_DENSE_THRESHOLD lowered from 25 to 15 for better viewport culling
+- MSP coordinate sanity check for received waypoints
+
+### Performance
+- **Removed ftrace system**: all `ft.enter`/`ft.leave` and ftrace.lua deleted (−300 lines)
+- **Removed pcall wrappers**: paint(), wakeup(), utils rollover, logSettingsSnapshot, logDirectoryTree all use direct calls
+- **Embedded Lua optimizations**: cached `lcd.RGB` colors (wpColorShadow, obsMarkerFill), reused sensorNameCache/topBarValueCache in-place, localized `pairs`/`tostring`, moved mspStateNames to module level, reused `_trailSnapshot` table, direct array append in logDebug
+- Viewport culling via Cohen-Sutherland trivial-reject: steady 3.2–3.4 fps with 60 WPs, peak 4.8 fps with 12 WPs cached
+- Vehicle symbol drawing reduces API calls (Arrow: 8→6, Airplane: 16→11)
+
+### Fixed
+- **`hitMission` undefined**: replaced with `status.mspMissions[status.mspMissionIdx]`
+- **`overlayFont` undefined**: was nil causing lcd.font(nil), now correctly computed
+- **`perfActive` missing in `loadAndCenterTiles`**: added guard
+- Redundant perf assignment in maplib removed
+- Dead `scaleLen`/`scaleLabel` variables removed from layout_default
+- Unused `libs` locals removed from maplib and drawlib
+- Tombstone comments removed from tileloader
+
+---
+
 ## 2.0-beta1 (2026-03-29)
 
 ### Breaking

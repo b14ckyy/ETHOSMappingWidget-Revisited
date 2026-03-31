@@ -78,6 +78,9 @@ local PAN_GRACE_DURATION_CS  = 500  -- 5s: grace period before auto-recenter
 -- The widget title bar can consume a few rows, so allow 10% height reduction.
 local PAN_HEIGHT_TOLERANCE = 0.90
 
+-- GPS staleness: if lat/lon stop changing for this many centiseconds, mark telemetry lost.
+local GPS_STALE_TIMEOUT = 500  -- 5 seconds
+
 local logDebugSessionStart
 local configRebuildInProgress = false
 
@@ -226,6 +229,13 @@ local mapStatus = {
     travelDist = 0,
     value = 0,
   },
+
+  -- GPS staleness detection: telemetry is considered lost when lat/lon stop
+  -- changing for GPS_STALE_TIMEOUT centiseconds (5 s).
+  telemetryLost = false,
+  _lastGpsLat = nil,        -- Last observed lat value for change detection
+  _lastGpsLon = nil,        -- Last observed lon value for change detection
+  _lastGpsChangeTime = 0,   -- getTime() when lat or lon last changed
 
   -- Optional top bar telemetry sources selected by the user.
   linkQualitySource = nil,
@@ -660,6 +670,16 @@ local function bgtasks(widget)
   if gpsLat ~= nil and gpsLon ~= nil then
     telemetry.lat = gpsLat
     telemetry.lon = gpsLon
+
+    -- GPS staleness: track whether coordinates actually changed.
+    if gpsLat ~= mapStatus._lastGpsLat or gpsLon ~= mapStatus._lastGpsLon then
+      mapStatus._lastGpsLat = gpsLat
+      mapStatus._lastGpsLon = gpsLon
+      mapStatus._lastGpsChangeTime = now
+      mapStatus.telemetryLost = false
+    elseif mapStatus._lastGpsChangeTime ~= 0 and (now - mapStatus._lastGpsChangeTime) > GPS_STALE_TIMEOUT then
+      mapStatus.telemetryLost = true
+    end
 
     -- Log GPS position at most once every 15 seconds to avoid flooding the debug log.
     if mapStatus.debugEnabled and mapLibs and mapLibs.utils then

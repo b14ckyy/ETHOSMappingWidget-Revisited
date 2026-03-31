@@ -275,7 +275,7 @@ function panel.draw(widget)
     if not panActive then
     libs.drawLib.drawTopBar(widget, 0, topH)
 
-    lcd.font(verticalMedium and FONT_XS or FONT_S)
+    lcd.font(verticalMedium and FONT_S or FONT_STD)
 
     local overlayPadX = max(6, floor(8 * sx))
     local overlayPadY = max(3, floor(4 * sy))
@@ -290,7 +290,7 @@ function panel.draw(widget)
 
     lcd.color(colors.semiBlack45)
     lcd.drawFilledRectangle(gpsBoxX, gpsBoxY, gpsBoxW, gpsBoxH)
-    lcd.color(colors.white)
+    lcd.color(status.telemetryLost and colors.red or colors.white)
     lcd.drawText(gpsBoxX + floor((gpsBoxW - gpsTw) / 2), gpsBoxY + floor((gpsBoxH - gpsTh) / 2), gpsText)
 
     local zoomText = "zoom " .. tostring(status.mapZoomLevel)
