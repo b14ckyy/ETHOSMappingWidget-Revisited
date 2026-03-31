@@ -74,6 +74,7 @@ local trailLastLon = nil
 -- Reusable flat arrays for waypoint screen positions (avoids per-frame table-of-tables).
 local wpScrX = {}
 local wpScrY = {}
+local wpOutCode = {}  -- viewport outcode per WP for fast trivial-reject in Pass 1
 local lastZoomLevel = -99
 local lastMapProvider = -99
 local lastMapType = nil
@@ -492,7 +493,7 @@ local wpColorActive  = nil  -- green ring for active WP
 local wpColorUavRth  = nil  -- orange for UAV in RTH mode
 local wpColorShadow  = nil  -- translucent black for marker shadow fill
 local wpColorsReady  = false
-local WP_DENSE_THRESHOLD = 25 -- auto-dense mode when mission has more WPs than this
+local WP_DENSE_THRESHOLD = 15 -- auto-dense mode when mission has more WPs than this
 
 local function ensureWpColors()
   if wpColorsReady then return end
@@ -672,19 +673,30 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   local baseY = myScreenY - uav_tile_y * TILES_SIZE - uav_offset_y + renderOffsetY
   local scrX = wpScrX
   local scrY = wpScrY
+  local wpOC = wpOutCode
+  local xMax = x + w
+  local yMax = y + h
   local dense = false
   local visibleNavCount = 0
   local prevNavDense = nil
   for i = 1, mLen do
     if wpTpx[i] then
-      scrX[i] = baseX + wpTpx[i]
-      scrY[i] = baseY + wpTpy[i]
+      local sx = baseX + wpTpx[i]
+      local sy = baseY + wpTpy[i]
+      scrX[i] = sx
+      scrY[i] = sy
+      -- Viewport outcode for fast trivial-reject in Pass 1
+      local c = 0
+      if sx < x then c = 1 elseif sx > xMax then c = 2 end
+      if sy < y then c = c | 8 elseif sy > yMax then c = c | 4 end
+      wpOC[i] = c
     else
       scrX[i] = nil
       scrY[i] = nil
+      wpOC[i] = 15  -- all bits set = outside everything
     end
     if scrX[i] and wpIsNavigable(mission[i].action) then
-      if scrX[i] >= x and scrX[i] <= x + w and scrY[i] >= y and scrY[i] <= y + h then
+      if wpOC[i] == 0 then
         visibleNavCount = visibleNavCount + 1
       end
       if not dense then
@@ -702,6 +714,7 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   -- Clear stale entries beyond current mission length.
   for i = mLen + 1, #scrX do scrX[i] = nil end
   for i = mLen + 1, #scrY do scrY[i] = nil end
+  for i = mLen + 1, #wpOC do wpOC[i] = nil end
 
   -- Auto-dense: force dot-mode when too many WPs are visible in viewport
   if not dense and visibleNavCount > WP_DENSE_THRESHOLD then
@@ -722,20 +735,23 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     -- Path lines between consecutive navigable WPs
     if isNav and scrX[i] then
       if prevNav and scrX[prevNav] then
-        local lx1, ly1, lx2, ly2
-        if dense then
-          lx1, ly1 = scrX[prevNav], scrY[prevNav]
-          lx2, ly2 = scrX[i], scrY[i]
-        else
-          lx1, ly1, lx2, ly2 = shortenLine(
-            scrX[prevNav], scrY[prevNav],
-            scrX[i], scrY[i], wpR)
-        end
-        if lx1 then
-          lcd.color(wpColorPath)
-          lcd.pen(SOLID)
-          local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, x + w, y + h)
-          if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+        -- Trivial reject: both endpoints on same side → segment entirely outside viewport
+        if (wpOC[prevNav] & wpOC[i]) == 0 then
+          local lx1, ly1, lx2, ly2
+          if dense then
+            lx1, ly1 = scrX[prevNav], scrY[prevNav]
+            lx2, ly2 = scrX[i], scrY[i]
+          else
+            lx1, ly1, lx2, ly2 = shortenLine(
+              scrX[prevNav], scrY[prevNav],
+              scrX[i], scrY[i], wpR)
+          end
+          if lx1 then
+            lcd.color(wpColorPath)
+            lcd.pen(SOLID)
+            local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
+            if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+          end
         end
       end
       prevNav = i
@@ -745,30 +761,33 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     if action == WP_ACT_JUMP and prevNav then
       local targetIdx = wp.p1
       if targetIdx >= 1 and targetIdx <= mLen and scrX[targetIdx] and scrX[prevNav] then
-        local lx1, ly1, lx2, ly2
-        if dense then
-          lx1, ly1 = scrX[prevNav], scrY[prevNav]
-          lx2, ly2 = scrX[targetIdx], scrY[targetIdx]
-        else
-          lx1, ly1, lx2, ly2 = shortenLine(
-            scrX[prevNav], scrY[prevNav],
-            scrX[targetIdx], scrY[targetIdx], wpR)
-        end
-        if lx1 then
-          lcd.color(wpColorJump)
-          lcd.pen(DOTTED)
-          local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, x + w, y + h)
-          if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
-          lcd.pen(SOLID)
-
-          local mx = (lx1 + lx2) * 0.5
-          local my = (ly1 + ly2) * 0.5
-          local dx = lx2 - lx1
-          local dy = ly2 - ly1
-          local len = sqrt(dx * dx + dy * dy)
-          if len > 1 then
+        -- Trivial reject: both endpoints on same side → skip
+        if (wpOC[prevNav] & wpOC[targetIdx]) == 0 then
+          local lx1, ly1, lx2, ly2
+          if dense then
+            lx1, ly1 = scrX[prevNav], scrY[prevNav]
+            lx2, ly2 = scrX[targetIdx], scrY[targetIdx]
+          else
+            lx1, ly1, lx2, ly2 = shortenLine(
+              scrX[prevNav], scrY[prevNav],
+              scrX[targetIdx], scrY[targetIdx], wpR)
+          end
+          if lx1 then
             lcd.color(wpColorJump)
-            drawChevron(mx + dx / len * 12, my + dy / len * 12, dx / len, dy / len, 20)
+            lcd.pen(DOTTED)
+            local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
+            if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+            lcd.pen(SOLID)
+
+            local mx = (lx1 + lx2) * 0.5
+            local my = (ly1 + ly2) * 0.5
+            local dx = lx2 - lx1
+            local dy = ly2 - ly1
+            local len = sqrt(dx * dx + dy * dy)
+            if len > 1 then
+              lcd.color(wpColorJump)
+              drawChevron(mx + dx / len * 12, my + dy / len * 12, dx / len, dy / len, 20)
+            end
           end
         end
       end
