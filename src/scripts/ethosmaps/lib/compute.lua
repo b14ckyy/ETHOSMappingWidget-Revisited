@@ -16,6 +16,8 @@
 
 local compute = {}
 
+local os_clock = os.clock
+
 -- ── shared refs (set in init) ──────────────────────────────
 local status   -- mapStatus
 local libs     -- mapLibs
@@ -45,6 +47,15 @@ local results = {
     wpCount = 0,      -- trail point count at last projection
     head    = 0,      -- ring-buffer head at last projection
     valid   = false,  -- true when all trail points are projected
+  },
+  home = {
+    tpx   = nil,      -- home tile-pixel X (precomputed for paint)
+    tpy   = nil,      -- home tile-pixel Y (precomputed for paint)
+    level = 0,        -- zoom level at last computation
+  },
+  observation = {
+    tpx   = nil,      -- observation marker tile-pixel X
+    tpy   = nil,      -- observation marker tile-pixel Y
   },
 }
 
@@ -276,6 +287,30 @@ local function computeTileGrid(st, lb, res)
   if not mapLib or not mapLib.updateTileGrid then return end
   if not widget then return end
   mapLib.updateTileGrid(widget)
+
+  -- Precompute home tile-pixel for paint (saves coord_to_tiles every paint frame)
+  local tel = st.telemetry
+  local level = st.mapZoomLevel or 0
+  local coordToTiles = mapLib.coord_to_tiles
+  if tel and tel.homeLat and tel.homeLon and coordToTiles then
+    local htx, hty, hox, hoy = coordToTiles(tel.homeLat, tel.homeLon, level)
+    res.home.tpx = htx * TILES_SIZE + hox
+    res.home.tpy = hty * TILES_SIZE + hoy
+    res.home.level = level
+  else
+    res.home.tpx = nil
+    res.home.tpy = nil
+  end
+
+  -- Precompute observation marker tile-pixel (saves coord_to_tiles every paint frame)
+  if st.observationLat and st.observationLon and coordToTiles then
+    local otx, oty, oox, ooy = coordToTiles(st.observationLat, st.observationLon, level)
+    res.observation.tpx = otx * TILES_SIZE + oox
+    res.observation.tpy = oty * TILES_SIZE + ooy
+  else
+    res.observation.tpx = nil
+    res.observation.tpy = nil
+  end
 end
 
 -- ──────────────────────────────────────────────────────────────
@@ -319,12 +354,47 @@ function compute.update(w)
   widget = w  -- save for tasks that need the widget reference
   if taskCount == 0 then return end
 
+  local perfActive = status and status.perfActive
+  local perfAddMs = perfActive and status.perfProfileAddMs
+  local perfInc = perfActive and status.perfProfileInc
+  local totalStartMs
+  if perfActive then
+    totalStartMs = os_clock() * 1000
+  end
+
+  -- Map task names to trace IDs for ftrace
+  local ft = libs and libs.ftrace
+  local traceIds = ft and {
+    ["wpProjection"] = 54,
+    ["trailProjection"] = 55,
+    ["tileGrid"] = 56,
+  }
+
   for i = 1, taskCount do
     local t = tasks[i]
     if dirty[t.key] then
+      local taskStartMs
+      if perfActive then
+        taskStartMs = os_clock() * 1000
+      end
+      local tId = traceIds and traceIds[t.name]
+      if tId then ft.enter(tId) end
       t.fn(status, libs, results)
+      if tId then ft.leave(tId) end
       dirty[t.key] = false
+      if perfActive then
+        perfAddMs("compute_" .. t.name .. "_ms", os_clock() * 1000 - taskStartMs)
+        perfInc("compute_tasks_run")
+      end
+    else
+      if perfActive then
+        perfInc("compute_tasks_skipped")
+      end
     end
+  end
+
+  if perfActive then
+    perfAddMs("compute_total_ms", os_clock() * 1000 - totalStartMs)
   end
 end
 

@@ -68,6 +68,11 @@ local function safeSensorName(sensor)
   if sensor == nil then
     return nil
   end
+  -- Guard against corrupted config values (boolean/number instead of source object).
+  local st = type(sensor)
+  if st ~= "userdata" and st ~= "table" then
+    return nil
+  end
   local barTickSerial = (status and status.barTickSerial) or 0
   if barTickSerial ~= _sensorNameCacheTick then
     _sensorNameCache = {}
@@ -606,17 +611,15 @@ end
 
 -- Cohen-Sutherland line clipping against a rectangular viewport.
 -- Returns clipped x1,y1,x2,y2 or nil if the segment is entirely outside.
+-- NOTE: outCode is inlined (not a local closure) to save ~1,500+ VM
+-- opcodes per paint frame — critical for the ETHOS 40K instruction limit.
 function drawLib.clipLine(x1, y1, x2, y2, xmin, ymin, xmax, ymax)
-  local function outCode(x, y)
-    local code = 0
-    if x < xmin then code = code | 1
-    elseif x > xmax then code = code | 2 end
-    if y < ymin then code = code | 8
-    elseif y > ymax then code = code | 4 end
-    return code
-  end
-  local code1 = outCode(x1, y1)
-  local code2 = outCode(x2, y2)
+  local code1 = 0
+  if x1 < xmin then code1 = 1 elseif x1 > xmax then code1 = 2 end
+  if y1 < ymin then code1 = code1 | 8 elseif y1 > ymax then code1 = code1 | 4 end
+  local code2 = 0
+  if x2 < xmin then code2 = 1 elseif x2 > xmax then code2 = 2 end
+  if y2 < ymin then code2 = code2 | 8 elseif y2 > ymax then code2 = code2 | 4 end
   for _ = 1, 20 do
     if (code1 | code2) == 0 then return x1, y1, x2, y2 end
     if (code1 & code2) ~= 0 then return nil end
@@ -631,8 +634,17 @@ function drawLib.clipLine(x1, y1, x2, y2, xmin, ymin, xmax, ymax)
     else
       y = y1 + (y2 - y1) * (xmin - x1) / (x2 - x1); x = xmin
     end
-    if codeOut == code1 then x1 = x; y1 = y; code1 = outCode(x, y)
-    else x2 = x; y2 = y; code2 = outCode(x, y) end
+    if codeOut == code1 then
+      x1 = x; y1 = y
+      code1 = 0
+      if x1 < xmin then code1 = 1 elseif x1 > xmax then code1 = 2 end
+      if y1 < ymin then code1 = code1 | 8 elseif y1 > ymax then code1 = code1 | 4 end
+    else
+      x2 = x; y2 = y
+      code2 = 0
+      if x2 < xmin then code2 = 1 elseif x2 > xmax then code2 = 2 end
+      if y2 < ymin then code2 = code2 | 8 elseif y2 > ymax then code2 = code2 | 4 end
+    end
   end
   return nil
 end

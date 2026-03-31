@@ -42,8 +42,6 @@ local MAP_Y = 0
 
 -- Cached map support state for tiles, screen coordinates, trail history, and redraw throttling.
 local myScreenX, myScreenY
-local homeScreenX, homeScreenY
-local estimatedHomeScreenX, estimatedHomeScreenY
 local tile_x, tile_y, offset_x, offset_y
 local tiles = {}
 local tiles_path_to_idx = {} -- Maps tile file paths back to their active slot in the visible tile grid.
@@ -76,16 +74,9 @@ local trailLastLon = nil
 -- Reusable flat arrays for waypoint screen positions (avoids per-frame table-of-tables).
 local wpScrX = {}
 local wpScrY = {}
-local homeNeedsRefresh = true
-local lastHomePosUpdate = 0   -- Initialised to 0; first check after init always triggers.
 local lastZoomLevel = -99
 local lastMapProvider = -99
 local lastMapType = nil
-local estimatedHomeGps = {
-  lat = nil,
-  lon = nil
-}
-
 local coord_to_tiles = nil
 local tiles_to_path = nil
 local MinLatitude = -85.05112878
@@ -304,7 +295,8 @@ end
 
 function mapLib.loadAndCenterTiles(tile_x, tile_y, offset_x, offset_y, width, level, leadX, leadY, prefetchLeadX, prefetchLeadY, cacheRing, isPanning)
   -- Rebuilds the visible tile window around the current center tile and updates tile caches when the map moves or zooms.
-  local perfActive = status.perfActive
+  local ft = libs.ftrace
+  if ft then ft.enter(7) end -- loadAndCenterTiles
   local perfStartMs = nil
   if perfActive then
     perfStartMs = os_clock() * 1000
@@ -409,6 +401,7 @@ function mapLib.loadAndCenterTiles(tile_x, tile_y, offset_x, offset_y, width, le
   if perfActive then
     status.perfProfileAddMs("tile_update_ms", os_clock() * 1000 - perfStartMs)
   end
+  if ft then ft.leave(7) end -- loadAndCenterTiles
 end
 
 
@@ -453,6 +446,9 @@ function mapLib.drawTiles(width, xmin, ymin)
     end
   end
 
+  if perfActive and perfStartMs then
+    status.perfProfileAddMs("draw_tiles_ms", os_clock() * 1000 - perfStartMs)
+  end
 end
 
 
@@ -646,7 +642,10 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     libs.utils.logDebug("WP_DRAW", fmt("DRAW M%d: %d WPs, wpR=%d, screenX=%.0f", mIdx, #mission, max(floor(20 * min(status.scaleX or 1, status.scaleY or 1)), 10), myScreenX), true)
   end
 
+  local ft = libs.ftrace
+  if ft then ft.enter(13) end -- ensureWpColors
   ensureWpColors()
+  if ft then ft.leave(13) end
 
   local scaleX = status.scaleX or 1
   local scaleY = status.scaleY or 1
@@ -668,6 +667,7 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   -- Dense mode (proximity + auto-dense) is resolved BEFORE any line drawing so
   -- that the WP1→WP2 segment isn't accidentally shortened when a later pair
   -- triggers the density threshold.
+  if ft then ft.enter(14) end -- WP Pass 0: positions
   local baseX = myScreenX - uav_tile_x * TILES_SIZE - uav_offset_x + renderOffsetX
   local baseY = myScreenY - uav_tile_y * TILES_SIZE - uav_offset_y + renderOffsetY
   local scrX = wpScrX
@@ -707,8 +707,10 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   if not dense and visibleNavCount > WP_DENSE_THRESHOLD then
     dense = true
   end
+  if ft then ft.leave(14) end -- WP Pass 0: positions
 
   -- Pass 1: Draw path lines + JUMP connections using pre-determined dense.
+  if ft then ft.enter(15) end -- WP Pass 1: path lines
   local prevNav = nil
   lcd.color(wpColorPath)
   lcd.pen(SOLID)
@@ -772,11 +774,13 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
       end
     end
   end
+  if ft then ft.leave(15) end -- WP Pass 1: path lines
 
   -- When actively dragging, skip heavy passes (circles, numbers, annotations)
   if isPanning then return end
 
   -- Pass 2: Markers + SET_HEAD chevrons + JUMP iteration text + RTH lines
+  if ft then ft.enter(16) end -- WP Pass 2: markers
   lcd.font(FONT_STD)  -- set once for all markers (not per-marker)
   local navNum = 0
   local curActiveWp = status.mspActiveWp or 0
@@ -850,6 +854,7 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
       lastNavIdx = i
     end
   end
+  if ft then ft.leave(16) end -- WP Pass 2: markers
 
 end
 
@@ -883,7 +888,10 @@ function mapLib.updateTileGrid(widget)
   if not telemetry then return end
 
   -- Ensure projection helpers and grid constants are configured.
+  local ft = libs.ftrace
+  if ft then ft.enter(63) end -- setupMaps [wakeup]
   setupMaps(x, y, w, h, level, tiles_x, tiles_y)
+  if ft then ft.leave(63) end
 
   -- Effective rendering position: fall back to saved default position when GPS is unavailable.
   local renderLat = telemetry.lat
@@ -1007,7 +1015,10 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
     perfStartMs = os_clock() * 1000
   end
   lcd.setClipping(x, y, w, h)
+  local ft = libs.ftrace
+  if ft then ft.enter(4) end -- setupMaps
   setupMaps(x, y, w, h, level, tiles_x, tiles_y)
+  if ft then ft.leave(4) end
 
   -- Publish viewport params so compute.lua/wakeup can call updateTileGrid().
   status.mapViewX = x
@@ -1040,10 +1051,17 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   -- Tile grid, vehicle position, and drawOffset are now pre-computed
   -- by updateTileGrid() in compute.lua/wakeup().  Module-level tile_x,
   -- tile_y, offset_x, offset_y, myScreenX, myScreenY and widget.drawOffsetX/Y
-  -- are already set.  On the very first frame (before any wakeup), fall back
-  -- to a bootstrap call so the grid is not empty.
+  -- are already set.  When the grid is empty (e.g. after a zoom-triggered
+  -- setupMaps reset that happens between wakeup and paint), skip drawing
+  -- for this frame and let the next wakeup rebuild the grid.  This avoids
+  -- running the heavy updateTileGrid + loadAndCenterTiles bootstrap inside
+  -- paint's 40K instruction budget.
   if #tiles == 0 or tiles[1] == nil then
-    mapLib.updateTileGrid(widget)
+    if perfActive and perfStartMs then
+      status.perfProfileAddMs("paint_total_ms", os_clock() * 1000 - perfStartMs)
+    end
+    lcd.setClipping()
+    return
   end
 
   local minX = max(0, MAP_X)
@@ -1070,91 +1088,21 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
     end
   end
 
-  -- Save UAV tile coords before home calculation (which temporarily overwrites them).
+  -- Save UAV tile coords before drawing (used by trail, WP, observation marker).
   local uav_tile_x, uav_tile_y = tile_x, tile_y
   local uav_offset_x, uav_offset_y = offset_x, offset_y
 
-  if status.getTime() - lastHomePosUpdate > 20 then
-    lastHomePosUpdate = status.getTime()
-    if homeNeedsRefresh then
-      homeNeedsRefresh = false
-      if telemetry.homeLat ~= nil and telemetry.homeLon ~= nil then
-        local h_x, h_y, h_ox, h_oy = mapLib.coord_to_tiles(telemetry.homeLat, telemetry.homeLon, level)
-        homeScreenX, homeScreenY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, h_x, h_y, h_ox, h_oy, level)
-      end
-    else
-      homeNeedsRefresh = true
-      estimatedHomeGps.lat, estimatedHomeGps.lon = libs.utils.getLatLonFromAngleAndDistance(telemetry.homeAngle, telemetry.homeDist)
-      if estimatedHomeGps.lat ~= nil then
-        local e_x, e_y, e_ox, e_oy = mapLib.coord_to_tiles(estimatedHomeGps.lat, estimatedHomeGps.lon, level)
-        estimatedHomeScreenX, estimatedHomeScreenY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, e_x, e_y, e_ox, e_oy, level)
-      end
-    end
-  end
+  -- Home position has been fully moved to compute.lua (tile-pixel precomputed
+  -- in computeTileGrid).  Paint only reads results.home.tpx/tpy below.
 
-  local trailResolution = tonumber((status and status.conf and status.conf.mapTrailResolution) or 0) or 0
-  if trailResolution > 0 and doStateUpdate and telemetry.lat ~= nil and telemetry.lon ~= nil
-      and (telemetry.lat ~= 0 or telemetry.lon ~= 0) then
-    if trailLastLat ~= nil then
-      local delta = libs.utils.haversine(trailLastLat, trailLastLon, telemetry.lat, telemetry.lon)
-      trailAccumDist = trailAccumDist + delta
-    end
-    trailLastLat = telemetry.lat
-    trailLastLon = telemetry.lon
-    if trailWpCount == 0 then
-      -- First GPS fix: place initial anchor so the dynamic segment starts immediately.
-      trailWpCount = 1
-      trailHead = 1
-      trailWaypoints[1] = { telemetry.lat, telemetry.lon }
-      if libs and libs.compute then libs.compute.setDirty("needsTrailProjection") end
-    elseif trailAccumDist >= trailResolution then
-      -- Angle check: compute the bend between the last committed segment and the
-      -- pending segment (last WP → current UAV position).  Only commit when the
-      -- angle exceeds the configured threshold.
-      local bendExceeded = true
-      if trailWpCount >= 2 then
-        -- Find the previous waypoint (N-1) in the ring-buffer.
-        local prevIdx
-        if trailWpCount < TRAIL_MAX_WAYPOINTS then
-          prevIdx = trailHead - 1
-        else
-          prevIdx = ((trailHead - 2) % TRAIL_MAX_WAYPOINTS) + 1
-        end
-        local prevWp = trailWaypoints[prevIdx]
-        local headWp = trailWaypoints[trailHead]
-        -- Vectors: segment A (prevWp → headWp) and segment B (headWp → UAV)
-        local ax, ay = headWp[2] - prevWp[2], headWp[1] - prevWp[1]
-        local bx, by = telemetry.lon - headWp[2], telemetry.lat - headWp[1]
-        -- Angle between the two segments via atan2 of cross/dot product.
-        local cross = ax * by - ay * bx
-        local dot   = ax * bx + ay * by
-        local bendDeg = abs(deg(atan(cross, dot)))
-        local threshold = tonumber((status.conf and status.conf.mapTrailHeadingThreshold) or 5) or 5
-        bendExceeded = (bendDeg >= threshold)
-      end
-      if bendExceeded then
-        trailAccumDist = 0
-        if trailWpCount < TRAIL_MAX_WAYPOINTS then
-          trailWpCount = trailWpCount + 1
-          trailHead = trailWpCount
-          trailWaypoints[trailWpCount] = { telemetry.lat, telemetry.lon }
-        else
-          -- Ring-buffer: overwrite oldest slot (O(1) instead of O(n) table.remove)
-          trailHead = (trailHead % TRAIL_MAX_WAYPOINTS) + 1
-          trailWaypoints[trailHead] = { telemetry.lat, telemetry.lon }
-        end
-        -- Notify compute.lua to project the new trail point.
-        if libs and libs.compute then libs.compute.setDirty("needsTrailProjection") end
-      end
-    end
-  elseif trailResolution == 0 and trailWpCount > 0 then
-    -- Trail disabled: free waypoint memory immediately.
-    mapLib.clearTrail()
-  end
+  -- Trail accumulation has been moved to mapLib.updateTrail() called from wakeup.
 
+  if ft then ft.enter(8) end -- drawTiles
   mapLib.drawTiles(TILES_X, minX + renderOffsetX, minY + renderOffsetY)
+  if ft then ft.leave(8) end
 
   local uavEdgeDrawX, uavEdgeDrawY
+  if ft then ft.enter(9) end -- drawVehicle block
   if myScreenX ~= nil and myScreenY ~= nil then
     local drawX = myScreenX + renderOffsetX
     local drawY = myScreenY + renderOffsetY
@@ -1185,12 +1133,16 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
       uavEdgeDrawY = drawY
     end
   end
+  if ft then ft.leave(9) end -- drawVehicle block
 
+  if ft then ft.enter(10) end -- home drawing block
   local homeDrawX, homeDrawY
-  if telemetry.homeLat ~= nil and telemetry.homeLon ~= nil and myScreenX ~= nil and uav_tile_x ~= nil then
-    local htx, hty, hox, hoy = mapLib.coord_to_tiles(telemetry.homeLat, telemetry.homeLon, level)
-    local hx = myScreenX + (htx - uav_tile_x) * TILES_SIZE + (hox - uav_offset_x) + renderOffsetX
-    local hy = myScreenY + (hty - uav_tile_y) * TILES_SIZE + (hoy - uav_offset_y) + renderOffsetY
+  local homeRes = libs.compute and libs.compute.getResults().home
+  if homeRes and homeRes.tpx and myScreenX ~= nil and uav_tile_x ~= nil then
+    local uavTpx = uav_tile_x * TILES_SIZE + uav_offset_x
+    local uavTpy = uav_tile_y * TILES_SIZE + uav_offset_y
+    local hx = myScreenX + (homeRes.tpx - uavTpx) + renderOffsetX
+    local hy = myScreenY + (homeRes.tpy - uavTpy) + renderOffsetY
     local homeCode = libs.drawLib.computeOutCode(hx, hy, x + 14, y + 12, x + w - 14, y + h - 12)
     if homeCode == 0 then
       libs.drawLib.drawBitmap(hx - 14, hy - 12, "minihomeorange")
@@ -1200,7 +1152,10 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
       homeDrawY = hy
     end
   end
+  if ft then ft.leave(10) end -- home drawing block
 
+  if ft then ft.enter(11) end -- trail drawing block
+  local trailResolution = tonumber((status and status.conf and status.conf.mapTrailResolution) or 0) or 0
   if trailResolution > 0 and trailWpCount >= 1 and myScreenX ~= nil and uav_tile_x ~= nil then
     -- Read pre-computed tile-pixel positions from compute.lua (wakeup).
     local trailRes = libs.compute.getResults().trail
@@ -1255,34 +1210,39 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
       end
     end
   end
+  if ft then ft.leave(11) end -- trail drawing block
 
   -- Waypoint mission overlay (skip heavy rendering only during active finger drag)
+  if ft then ft.enter(12) end -- drawWaypoints
   drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offset_x, uav_offset_y, renderOffsetX, renderOffsetY, panState == 1)
+  if ft then ft.leave(12) end
 
   -- Observation marker: green line from UAV + marker circle
+  if ft then ft.enter(17) end -- observation marker block
   if status.observationLat ~= nil and status.observationLon ~= nil and myScreenX ~= nil and uav_tile_x ~= nil then
-    local mtx, mty, mox, moy = mapLib.coord_to_tiles(status.observationLat, status.observationLon, level)
-    local markerX = myScreenX + (mtx - uav_tile_x) * TILES_SIZE + (mox - uav_offset_x) + renderOffsetX
-    local markerY = myScreenY + (mty - uav_tile_y) * TILES_SIZE + (moy - uav_offset_y) + renderOffsetY
-    local uavDX = myScreenX + renderOffsetX
-    local uavDY = myScreenY + renderOffsetY
-    -- Green line from UAV to observation marker (clipped to viewport)
-    lcd.color(status.colors.observationGreen)
-    lcd.pen(SOLID)
-    local cx1, cy1, cx2, cy2 = libs.drawLib.clipLine(uavDX, uavDY, markerX, markerY, x, y, x + w, y + h)
-    if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
-    -- Marker circle if within viewport
-    local markerCode = libs.drawLib.computeOutCode(markerX, markerY, x + 6, y + 6, x + w - 6, y + h - 6)
-    if markerCode == 0 then
-      local mr = floor(5 * min(scaleX, scaleY))
-      lcd.color(lcd.RGB(0, 200, 0, 0.6))
-      lcd.drawFilledCircle(markerX, markerY, mr)
-      lcd.color(BLACK)
-      lcd.drawCircle(markerX, markerY, mr)
+    local obsRes = libs.compute and libs.compute.getResults().observation
+    if obsRes and obsRes.tpx then
+      local markerX = myScreenX + obsRes.tpx - uav_tile_x * TILES_SIZE - uav_offset_x + renderOffsetX
+      local markerY = myScreenY + obsRes.tpy - uav_tile_y * TILES_SIZE - uav_offset_y + renderOffsetY
+      local uavDX = myScreenX + renderOffsetX
+      local uavDY = myScreenY + renderOffsetY
+      -- Green line from UAV to observation marker (clipped to viewport)
+      lcd.color(status.colors.observationGreen)
+      lcd.pen(SOLID)
+      local cx1, cy1, cx2, cy2 = libs.drawLib.clipLine(uavDX, uavDY, markerX, markerY, x, y, x + w, y + h)
+      if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+      -- Marker circle if within viewport
+      local markerCode = libs.drawLib.computeOutCode(markerX, markerY, x + 6, y + 6, x + w - 6, y + h - 6)
+      if markerCode == 0 then
+        local mr = floor(5 * min(scaleX, scaleY))
+        lcd.color(lcd.RGB(0, 200, 0, 0.6))
+        lcd.drawFilledCircle(markerX, markerY, mr)
+        lcd.color(BLACK)
+        lcd.drawCircle(markerX, markerY, mr)
+      end
     end
   end
-
-  -- Show pending zoom target from channel control
+  if ft then ft.leave(17) end -- observation marker block
   if status.zoomControlTarget ~= nil and status.zoomControlTarget ~= level then
     lcd.font(FONT_XL)
     local zoomTargetText = fmt("ZOOM > %d", status.zoomControlTarget)
@@ -1342,14 +1302,21 @@ function setupMaps(x, y, w, h, level, tiles_x, tiles_y)
   local provider = (status and status.conf and status.conf.mapProvider) or 2
   local mapType = (status and status.conf and status.conf.mapType) or ""
   if level ~= lastZoomLevel or provider ~= lastMapProvider or mapType ~= lastMapType or lastZoomLevel == -99 then
+    local ft = libs.ftrace
+    if ft then ft.enter(24) end -- clearTable (setupMaps)
     libs.resetLib.clearTable(tiles)
     libs.resetLib.clearTable(tiles_path_to_idx)
     _lastCenterTileX = nil  -- force rebuild on next loadAndCenterTiles
+    if ft then ft.leave(24) end
+    if ft then ft.enter(25) end -- clearCache (setupMaps)
     libs.tileLoader.clearCache()
+    if ft then ft.leave(25) end
 
     world_tiles = mapLib.tiles_on_level(level)
     tiles_per_radian = world_tiles / (2 * pi)
+    if ft then ft.enter(5) end -- configureProjectionHelpers
     configureProjectionHelpers(provider)
+    if ft then ft.leave(5) end
     tile_dim = (40075017/world_tiles) * status.conf.distUnitScale
     local scaleDistance = getScaleDistanceForLevel(level)
     scaleLabel = fmt("%.0f%s", scaleDistance, status.conf.distUnitLabel)
@@ -1376,6 +1343,62 @@ function mapLib.clearTrail()
   end
   libs.resetLib.clearTable(wpScrX)
   libs.resetLib.clearTable(wpScrY)
+end
+
+--- Trail accumulation: haversine distance check + bend angle commit.
+--- Called from wakeup() to keep trig computation out of paint().
+function mapLib.updateTrail()
+  local telemetry = status.telemetry
+  if not telemetry then return end
+  local trailResolution = tonumber((status and status.conf and status.conf.mapTrailResolution) or 0) or 0
+  if trailResolution > 0 and telemetry.lat ~= nil and telemetry.lon ~= nil
+      and (telemetry.lat ~= 0 or telemetry.lon ~= 0) then
+    if trailLastLat ~= nil then
+      local delta = libs.utils.haversine(trailLastLat, trailLastLon, telemetry.lat, telemetry.lon)
+      trailAccumDist = trailAccumDist + delta
+    end
+    trailLastLat = telemetry.lat
+    trailLastLon = telemetry.lon
+    if trailWpCount == 0 then
+      trailWpCount = 1
+      trailHead = 1
+      trailWaypoints[1] = { telemetry.lat, telemetry.lon }
+      if libs and libs.compute then libs.compute.setDirty("needsTrailProjection") end
+    elseif trailAccumDist >= trailResolution then
+      local bendExceeded = true
+      if trailWpCount >= 2 then
+        local prevIdx
+        if trailWpCount < TRAIL_MAX_WAYPOINTS then
+          prevIdx = trailHead - 1
+        else
+          prevIdx = ((trailHead - 2) % TRAIL_MAX_WAYPOINTS) + 1
+        end
+        local prevWp = trailWaypoints[prevIdx]
+        local headWp = trailWaypoints[trailHead]
+        local ax, ay = headWp[2] - prevWp[2], headWp[1] - prevWp[1]
+        local bx, by = telemetry.lon - headWp[2], telemetry.lat - headWp[1]
+        local cross = ax * by - ay * bx
+        local dot   = ax * bx + ay * by
+        local bendDeg = abs(deg(atan(cross, dot)))
+        local threshold = tonumber((status.conf and status.conf.mapTrailHeadingThreshold) or 5) or 5
+        bendExceeded = (bendDeg >= threshold)
+      end
+      if bendExceeded then
+        trailAccumDist = 0
+        if trailWpCount < TRAIL_MAX_WAYPOINTS then
+          trailWpCount = trailWpCount + 1
+          trailHead = trailWpCount
+          trailWaypoints[trailWpCount] = { telemetry.lat, telemetry.lon }
+        else
+          trailHead = (trailHead % TRAIL_MAX_WAYPOINTS) + 1
+          trailWaypoints[trailHead] = { telemetry.lat, telemetry.lon }
+        end
+        if libs and libs.compute then libs.compute.setDirty("needsTrailProjection") end
+      end
+    end
+  elseif trailResolution == 0 and trailWpCount > 0 then
+    mapLib.clearTrail()
+  end
 end
 
 --- Returns a read-only snapshot of trail ring-buffer state for compute.lua.

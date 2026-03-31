@@ -27,11 +27,14 @@ local fmt = string.format
 local tinsert, tremove, tconcat = table.insert, table.remove, table.concat
 local os_clock, os_time = os.clock, os.time
 
--- Widget version string.  Bump this on every release that changes the
--- number or order of settings in read()/write().  Stored as the first
--- hidden storage slot so read() can detect version mismatches and
--- reset corrupted settings to safe defaults.
-local WIDGET_VERSION = "2.0-beta1"
+-- Widget version string shown in the settings UI.  Bump on every release.
+local WIDGET_VERSION = "2.1-dev1"
+
+-- Storage schema version.  Only bump this when storage keys are renamed,
+-- reordered, or changed in a way that makes old stored values unreadable.
+-- Adding or removing keys in a key-value store is backward-compatible
+-- and does NOT require a schema bump.
+local STORAGE_SCHEMA = 2
 
 
 local _getTimeImpl = nil
@@ -502,6 +505,9 @@ local function initLibs()
   if mapLibs.mapLib == nil then mapLibs.mapLib = loadLib("maplib") end
   if mapLibs.compute == nil then mapLibs.compute = loadLib("compute") end
   if mapLibs.msp == nil then mapLibs.msp = loadLib("msp") end
+  -- ftrace is only loaded when performance profiling is enabled to avoid
+  -- its own instruction overhead triggering the ETHOS instruction limit.
+  if mapStatus.conf.enablePerfProfile and mapLibs.ftrace == nil then mapLibs.ftrace = loadLib("ftrace") end
 end
 
 local function checkSize(widget)
@@ -597,17 +603,20 @@ local function bgtasks(widget)
     -- Sensors mode: read from user-assigned sources.
     local srcLat = conf.sensorGpsLat
     local srcLon = conf.sensorGpsLon
-    if srcLat ~= nil and type(srcLat.value) == "function" then
+    local srcLatType = type(srcLat)
+    local srcLonType = type(srcLon)
+    if (srcLatType == "userdata" or srcLatType == "table") and type(srcLat.value) == "function" then
       local ok, v = pcall(srcLat.value, srcLat)
       if ok then gpsLat = v end
     end
-    if srcLon ~= nil and type(srcLon.value) == "function" then
+    if (srcLonType == "userdata" or srcLonType == "table") and type(srcLon.value) == "function" then
       local ok, v = pcall(srcLon.value, srcLon)
       if ok then gpsLon = v end
     end
     -- Optional heading source → telemetry.yaw (overrides calculated COG).
     local srcHdg = conf.sensorHeading
-    if srcHdg ~= nil and type(srcHdg.value) == "function" then
+    local srcHdgType = type(srcHdg)
+    if (srcHdgType == "userdata" or srcHdgType == "table") and type(srcHdg.value) == "function" then
       local hdg = srcHdg:value()
       if hdg ~= nil and hdg ~= 0 then
         telemetry.yaw = hdg
@@ -616,7 +625,8 @@ local function bgtasks(widget)
     end
     -- Optional speed source → telemetry.groundSpeed (overrides calculated speed).
     local srcSpd = conf.sensorSpeed
-    if srcSpd ~= nil and type(srcSpd.value) == "function" then
+    local srcSpdType = type(srcSpd)
+    if (srcSpdType == "userdata" or srcSpdType == "table") and type(srcSpd.value) == "function" then
       local spd = srcSpd:value()
       if spd ~= nil and spd ~= 0 then
         telemetry.groundSpeed = spd
@@ -730,7 +740,7 @@ local function gpsDataAvailable(lat,lon)
   return lat ~= nil and lon ~= nil and lat ~= 0 and lon ~= 0
 end
 
-local function paintProtected(widget)
+local function paintInner(widget)
   -- Clears the widget area and routes drawing to the active layout using the latest shared state.
   local perfActive = mapStatus.perfActive
   local perfStartMs = nil
@@ -738,6 +748,7 @@ local function paintProtected(widget)
     perfStartMs = perfNowMs()
     perfInc("paint_calls", 1)
   end
+  local ft = mapLibs.ftrace
   widget = resolveWidget(widget)
   if not widget then return end -- Safeguard: Ethos can call paint before a widget instance is fully available.
   lcd.color(mapStatus.colors.background)
@@ -748,27 +759,38 @@ local function paintProtected(widget)
     mapStatus.lastScreen = widget.screen
   end
 
-  if not checkSize(widget) then return end
+  if ft then ft.enter(27) end -- checkSize
+  local sizeOk = checkSize(widget)
+  if ft then ft.leave(27) end
+  if not sizeOk then return end
 
   if not widget.ready then
+    if ft then ft.enter(28) end -- loadLayout
     loadLayout(widget)
+    if ft then ft.leave(28) end
   else
     if mapStatus.layout[widget.screen] ~= nil then
       local drawStartMs = nil
       if perfActive then
         drawStartMs = perfNowMs()
       end
+      if ft then ft.enter(2) end -- panel.draw
       mapStatus.layout[widget.screen].draw(widget)
+      if ft then ft.leave(2) end
       if perfActive then
         perfAddMs("layout_draw_ms", perfNowMs() - drawStartMs)
       end
     else
+      if ft then ft.enter(28) end -- loadLayout
       loadLayout(widget)
+      if ft then ft.leave(28) end
     end
   end
 
   if mapStatus.followLock and not gpsDataAvailable(mapStatus.telemetry.lat, mapStatus.telemetry.lon) then
+    if ft then ft.enter(23) end -- drawNoGPSData
     mapLibs.drawLib.drawNoGPSData(widget)
+    if ft then ft.leave(23) end
   end
   if perfActive then
     local paintElapsedMs = perfNowMs() - perfStartMs
@@ -783,9 +805,30 @@ local function paintProtected(widget)
 end
 
 local function paint(widget)
-  local ok, err = pcall(paintProtected, widget)
-  if not ok and mapStatus.debugEnabled and mapLibs and mapLibs.utils then
-    mapLibs.utils.logDebug("PAINT", "pcall caught: " .. tostring(err), true)
+  local ft = mapLibs.ftrace
+  if ft then
+    ft.frameStart()
+    ft.enter(1) -- paint
+  end
+  local ok, err = pcall(paintInner, widget)
+  if ok then
+    if ft then
+      ft.leave(1)
+      ft.frameEnd(false)
+    end
+  else
+    if ft then
+      -- Don't record leave — paint didn't complete
+      ft.frameEnd(true, tostring(err))
+    end
+    -- Show error on screen so it's immediately visible
+    lcd.color(RED)
+    lcd.font(FONT_XS)
+    lcd.drawText(4, 4, "ERR: " .. tostring(err))
+    -- Log to debug file
+    if mapLibs.utils and mapLibs.utils.logDebug then
+      mapLibs.utils.logDebug("PAINT_ERR", tostring(err))
+    end
   end
 end
 
@@ -1024,8 +1067,7 @@ local function event(widget, category, value, x, y)
           end
         end
         -- Persist immediately
-        storage.write("observationLat", mapStatus.observationLat)
-        storage.write("observationLon", mapStatus.observationLon)
+        writeStateFile()
         mapStatus.consumeZoomRelease = true
         markMapDirty()
         if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
@@ -1042,7 +1084,7 @@ local function event(widget, category, value, x, y)
 
       -- Zoom buttons always take priority
       if hitMinus then
-        if mapStatus.mapZoomLevel <= mapStatus.conf.mapZoomMin then
+        if (tonumber(mapStatus.mapZoomLevel) or 1) <= (tonumber(mapStatus.conf.mapZoomMin) or 1) then
           -- Already at min zoom — consume event, show message, don't recenter
           mapStatus.zoomLimitMessageEnd = getTime() + 200  -- 2 seconds
           if panState == PAN_GRACE then
@@ -1089,7 +1131,7 @@ local function event(widget, category, value, x, y)
         return true
 
       elseif hitPlus then
-        if mapStatus.mapZoomLevel >= mapStatus.conf.mapZoomMax then
+        if (tonumber(mapStatus.mapZoomLevel) or 20) >= (tonumber(mapStatus.conf.mapZoomMax) or 20) then
           -- Already at max zoom — consume event, show message, don't recenter
           mapStatus.zoomLimitMessageEnd = getTime() + 200  -- 2 seconds
           if panState == PAN_GRACE then
@@ -1212,8 +1254,7 @@ local function setDefaultPosition(widget)
   if lat ~= nil and lon ~= nil then
     mapStatus.conf.defaultLat = lat
     mapStatus.conf.defaultLon = lon
-    storage.write("defaultLat", lat)
-    storage.write("defaultLon", lon)
+    writeStateFile()
   end
 end
 
@@ -1227,22 +1268,19 @@ local function menu(widget)
     }
     -- Hide manual zoom when proportional channel control overrides it.
     if mapStatus.conf.zoomControl ~= 2 then
-      items[#items+1] = { "Maps: Zoom in", function() mapStatus.mapZoomLevel = min(mapStatus.conf.mapZoomMax, mapStatus.mapZoomLevel+1); markMapDirty() end}
-      items[#items+1] = { "Maps: Zoom out", function() mapStatus.mapZoomLevel = max(mapStatus.conf.mapZoomMin, mapStatus.mapZoomLevel-1); markMapDirty() end}
+      items[#items+1] = { "Maps: Zoom in", function() mapStatus.mapZoomLevel = min(tonumber(mapStatus.conf.mapZoomMax) or 20, (tonumber(mapStatus.mapZoomLevel) or 1)+1); markMapDirty() end}
+      items[#items+1] = { "Maps: Zoom out", function() mapStatus.mapZoomLevel = max(tonumber(mapStatus.conf.mapZoomMin) or 1, (tonumber(mapStatus.mapZoomLevel) or 1)-1); markMapDirty() end}
     end
     return items
   end
   return { { "Maps: Reset", function() reset(widget) end } }
 end
 
-local function wakeup(widget)
+local function wakeupInner(widget)
   -- Runs recurring background work between paint calls and invalidates the LCD so Ethos schedules a redraw.
   local perfActive = mapStatus.perfActive
-  local perfStartMs = nil
-  if perfActive then
-    perfStartMs = perfNowMs()
-    perfInc("wakeup_calls", 1)
-  end
+  local ft = mapLibs.ftrace
+  if ft then ft.enter(50) end -- wakeup
   widget = resolveWidget(widget)
   if not widget then return end -- Safeguard: Ethos can schedule wakeup before the widget handle is ready.
   local now = getTime()
@@ -1255,9 +1293,18 @@ local function wakeup(widget)
   -- Drive MSP state machine FIRST to avoid SmartPort buffer overflow.
   -- Multiple poll() calls per cycle drain queued frames (each processes one chunk).
   if mapLibs and mapLibs.msp then
+    if ft then ft.enter(52) end -- msp.poll 10x
+    local mspStartMs
+    if perfActive then
+      mspStartMs = perfNowMs()
+    end
     for _ = 1, 10 do
       mapLibs.msp.poll()
     end
+    if perfActive and mspStartMs then
+      perfAddMs("msp_poll_ms", perfNowMs() - mspStartMs)
+    end
+    if ft then ft.leave(52) end
   end
 
   -- Pan state machine: timeout-based release and grace expiry
@@ -1296,7 +1343,7 @@ local function wakeup(widget)
   -- Zoom control via RC channel
   local zoomCtrl = mapStatus.conf.zoomControl
   local zoomCh = mapStatus.conf.zoomChannel
-  if zoomCtrl ~= 0 and zoomCh > 0 then
+  if zoomCtrl ~= 0 and (tonumber(zoomCh) or 0) > 0 then
     -- Cache the channel source object; recreate only when channel number changes.
     if mapStatus.cachedZoomChannelSrc == nil or mapStatus.cachedZoomChannelNum ~= zoomCh then
       mapStatus.cachedZoomChannelSrc = system.getSource({category=CATEGORY_CHANNEL, member=zoomCh - 1})
@@ -1306,8 +1353,8 @@ local function wakeup(widget)
     if src ~= nil and type(src.value) == "function" then
       local chVal = src:value()
       if chVal ~= nil then
-        local zMin = mapStatus.conf.mapZoomMin or 1
-        local zMax = mapStatus.conf.mapZoomMax or 20
+        local zMin = tonumber(mapStatus.conf.mapZoomMin) or 1
+        local zMax = tonumber(mapStatus.conf.mapZoomMax) or 20
 
         if zoomCtrl == 1 then
           -- 3-Position mode: edge-triggered zoom steps
@@ -1363,13 +1410,16 @@ local function wakeup(widget)
     if perfActive then
       bgStartMs = perfNowMs()
     end
+    if ft then ft.enter(51) end -- bgtasks
     bgtasks(widget)
+    if ft then ft.leave(51) end
     if perfActive then
       perfAddMs("bgtasks_ms", perfNowMs() - bgStartMs)
     end
   end
 
   -- MSP status logging and mission publish (polling done at top of wakeup)
+  if ft then ft.enter(62) end -- MSP publish block
   if mapLibs and mapLibs.msp then
     local mspState = mapLibs.msp.getState()
 
@@ -1443,26 +1493,37 @@ local function wakeup(widget)
     mapStatus.mspNavMode  = mspState.navMode or 0
     mapStatus.mspActiveWp = mspState.activeWpNumber or 0
   end
+  if ft then ft.leave(62) end -- MSP publish block
+
+  -- Trail accumulation (moved from paint to keep trig out of the instruction budget)
+  if mapLibs and mapLibs.mapLib then
+    mapLibs.mapLib.updateTrail()
+  end
 
   -- Run compute scheduler (Phase 1+: staggered task processing)
   if mapLibs and mapLibs.compute then
+    if ft then ft.enter(53) end -- compute.update
     -- Phase 4: tile grid must update every cycle (GPS, pan, heading change continuously).
     -- loadAndCenterTiles has its own 25ms throttle to skip redundant rebuilds.
     mapLibs.compute.setDirty("needsTileGrid")
     mapLibs.compute.update(widget)
+    if ft then ft.leave(53) end
   end
 
   if mapLibs and mapLibs.tileLoader then
+    if ft then ft.enter(59) end -- tileLoader.processQueue
     if mapLibs.tileLoader.getQueueLength() > 0 then
       local tilesLoaded = mapLibs.tileLoader.processQueue(3)
       if perfActive and tilesLoaded > 0 then
         perfInc("tiles_loaded", tilesLoaded)
       end
     end
+    if ft then ft.leave(59) end -- tileLoader.processQueue
   end
 
   if mapStatus.debugEnabled
       and mapLibs and mapLibs.utils and mapLibs.utils.flushLogs then
+    if ft then ft.enter(60) end -- utils.flushLogs
     local flushStartMs = nil
     if perfActive then
       flushStartMs = perfNowMs()
@@ -1470,6 +1531,37 @@ local function wakeup(widget)
     mapLibs.utils.flushLogs(false)
     if perfActive then
       perfAddMs("log_flush_ms", perfNowMs() - flushStartMs)
+    end
+    if ft then ft.leave(60) end -- utils.flushLogs
+  end
+
+  if ft then ft.leave(50) end -- wakeup
+end
+
+local function wakeup(widget)
+  local perfActive = mapStatus.perfActive
+  local perfStartMs = nil
+  if perfActive then
+    perfStartMs = perfNowMs()
+    perfInc("wakeup_calls", 1)
+  end
+
+  local ft = mapLibs.ftrace
+  if ft then ft.frameStart() end
+
+  local ok, err = pcall(wakeupInner, widget)
+  if not ok then
+    -- Log error
+    if mapLibs.utils and mapLibs.utils.logDebug then
+      mapLibs.utils.logDebug("WAKEUP_ERR", tostring(err), true)
+    end
+    -- Trigger ftrace dump for wakeup crash
+    if ft then
+      ft.frameEnd(true, tostring(err))
+    end
+  else
+    if ft then
+      ft.frameEnd(false)
     end
   end
 
@@ -1496,6 +1588,14 @@ local function wakeup(widget)
       end
 
       -- Build all perf rows first, then print once to avoid UART buffer overflow.
+      local counters = mapStatus.perfProfile.counters
+      local metrics  = mapStatus.perfProfile.metrics
+      local mspWpReceived = counters.msp_wp_received or 0
+      local mspWpPerSec = 0
+      if elapsedSec > 0 then
+        mspWpPerSec = mspWpReceived / elapsedSec
+      end
+
       local perfBorder = "+----------+------------------+------------------+------------------+"
       local perfRows = {
         "=== PERF WINDOW " .. perfValueText(elapsedSec, 1) .. "s ===",
@@ -1504,30 +1604,38 @@ local function wakeup(widget)
           perfTableCell("fps", perfValueText(fps, 2)),
           perfTableCell("wakeups", wakeupCalls),
           perfTableCell("paints", paintCalls)),
-        perfTableRow("draw",
-          perfTableCell("paintMs", perfValueText(perfMetricAvg("paint_total_ms"), 2)),
+        perfTableRow("paint",
+          perfTableCell("totMs", perfValueText(perfMetricAvg("paint_total_ms"), 2)),
           perfTableCell("layoutMs", perfValueText(perfMetricAvg("layout_draw_ms"), 2)),
-          perfTableCell("tileMs", perfValueText(perfMetricAvg("tile_update_ms"), 2))),
-        perfTableRow("misc",
+          perfTableCell("drawTilesMs", perfValueText(perfMetricAvg("draw_tiles_ms"), 2))),
+        perfTableRow("compute",
+          perfTableCell("totMs", perfValueText(perfMetricAvg("compute_total_ms"), 2)),
+          perfTableCell("tileGridMs", perfValueText(perfMetricAvg("compute_tileGrid_ms"), 2)),
+          perfTableCell("wpMs", perfValueText(perfMetricAvg("compute_wpProjection_ms"), 2))),
+        perfTableRow("",
+          perfTableCell("trailMs", perfValueText(perfMetricAvg("compute_trailProjection_ms"), 2)),
+          perfTableCell("tasksRun", counters.compute_tasks_run or 0),
+          perfTableCell("tasksSkip", counters.compute_tasks_skipped or 0)),
+        perfTableRow("wakeup",
+          perfTableCell("totMs", perfValueText(perfMetricAvg("wakeup_total_ms"), 2)),
           perfTableCell("bgMs", perfValueText(perfMetricAvg("bgtasks_ms"), 2)),
-          perfTableCell("tileLoadMs", perfValueText(perfMetricAvg("tile_load_ms"), 2)),
-          perfTableCell("flushMs", perfValueText(perfMetricAvg("log_flush_ms"), 2))),
+          perfTableCell("mspPollMs", perfValueText(perfMetricAvg("msp_poll_ms"), 2))),
+        perfTableRow("msp",
+          perfTableCell("wp/s", perfValueText(mspWpPerSec, 1)),
+          perfTableCell("errors", counters.msp_errors or 0),
+          perfTableCell("wpTotal", mspWpReceived)),
         perfTableRow("tileIO",
-          perfTableCell("min", perfValueText((mapStatus.perfProfile.metrics.tile_load_ms or {}).min or 0, 2)),
-          perfTableCell("max", perfValueText((mapStatus.perfProfile.metrics.tile_load_ms or {}).max or 0, 2)),
-          perfTableCell("count", (mapStatus.perfProfile.metrics.tile_load_ms or {}).count or 0)),
+          perfTableCell("loadMs", perfValueText(perfMetricAvg("tile_load_ms"), 2)),
+          perfTableCell("min", perfValueText((metrics.tile_load_ms or {}).min or 0, 2)),
+          perfTableCell("max", perfValueText((metrics.tile_load_ms or {}).max or 0, 2))),
         perfTableRow("counts",
-          perfTableCell("rebuilds", mapStatus.perfProfile.counters.tile_rebuild_count or 0),
-          perfTableCell("tileCalls", mapStatus.perfProfile.counters.tile_update_calls or 0),
-          perfTableCell("tilesLoaded", mapStatus.perfProfile.counters.tiles_loaded or 0)),
+          perfTableCell("rebuilds", counters.tile_rebuild_count or 0),
+          perfTableCell("loaded", counters.tiles_loaded or 0),
+          perfTableCell("gcCalls", counters.gc_count or 0)),
         perfTableRow("sched",
-          perfTableCell("invalidates", mapStatus.perfProfile.counters.invalidate_count or 0),
-          perfTableCell("touches", mapStatus.perfProfile.counters.touch_events or 0),
-          perfTableCell("frame200ms", mapStatus.perfProfile.counters.long_frame_count_200ms or 0)),
-        perfTableRow("gc",
-          perfTableCell("gcCalls", mapStatus.perfProfile.counters.gc_count or 0),
-          perfTableCell("-", "-"),
-          perfTableCell("-", "-")),
+          perfTableCell("inval", counters.invalidate_count or 0),
+          perfTableCell("touches", counters.touch_events or 0),
+          perfTableCell("frame100ms", counters.long_frame_count_100ms or 0)),
         perfBorder,
       }
       for i = 1, #perfRows do
@@ -1540,6 +1648,7 @@ local function wakeup(widget)
   frameWakeupCount = frameWakeupCount + 1
   scheduledRenderCount = scheduledRenderCount + 1
   mapStatus.mapTickSerial = scheduledRenderCount
+  local now = getTime()
   if now - lastBarTickCs >= BAR_TICK_INTERVAL_CS then
     mapStatus.barTickSerial = mapStatus.barTickSerial + 1
     lastBarTickCs = now
@@ -1614,7 +1723,29 @@ end
 
 local function applyDefault(value, defaultValue, lookup)
   -- Resolves a value through a default and optional lookup table before configuration fields consume it.
-  local v = value ~= nil and value or defaultValue
+  -- IMPORTANT: Do NOT use `value ~= nil and value or default` here!
+  -- In Lua, `false or default` evaluates to `default`, which silently
+  -- replaces a legitimately stored boolean false with the default value.
+  local v
+  if value ~= nil then
+    v = value
+  else
+    v = defaultValue
+  end
+  -- Type coercion: ETHOS storage may round-trip booleans as 0/1 or numbers
+  -- as booleans.  Ensure the returned value matches the expected type so
+  -- downstream relational comparisons (<, >, <=, >=, math.max/min) never
+  -- encounter a number-vs-boolean mismatch.
+  if v ~= nil and defaultValue ~= nil then
+    local dt = type(defaultValue)
+    local vt = type(v)
+    if dt == "number" and vt ~= "number" then
+      v = tonumber(v) or defaultValue
+    elseif dt == "boolean" and vt ~= "boolean" then
+      if vt == "number" then v = v ~= 0
+      else v = (v == true or v == "true" or v == "1") end
+    end
+  end
   if lookup ~= nil then return lookup[v] end
   return v
 end
@@ -1646,6 +1777,62 @@ local function configToStorage(value, lookup)
     if lookup[i] == value then return i end
   end
   return 1
+end
+
+-- ── File-based runtime state persistence ─────────────────────────────────
+-- Runtime state that changes during normal operation (zoom level, observation
+-- marker, default position) is stored in a plain-text file on the SD card
+-- instead of ETHOS widget storage.  This avoids the limited widget storage
+-- buffer (see ETHOS issue #5462) and eliminates the risk of corrupting the
+-- configure()-managed settings when out-of-band storage.write() calls shift
+-- the positional slot counter.
+local STATE_FILE_PATH = "/scripts/ethosmaps/state.dat"
+
+local function writeStateFile()
+  -- Persists volatile runtime state to a file so it survives radio restarts.
+  local ok, err = pcall(function()
+    local f = io.open(STATE_FILE_PATH, "w")
+    if not f then return end
+    -- Simple key=value format, one per line.  Use "nil" sentinel for absent values.
+    local function w(key, val)
+      if val == nil then
+        f:write(key .. "=nil\n")
+      else
+        f:write(key .. "=" .. tostring(val) .. "\n")
+      end
+    end
+    w("version", WIDGET_VERSION)
+    w("mapZoomLevel", mapStatus.mapZoomLevel)
+    w("observationLat", mapStatus.observationLat)
+    w("observationLon", mapStatus.observationLon)
+    w("defaultLat", mapStatus.conf.defaultLat)
+    w("defaultLon", mapStatus.conf.defaultLon)
+    f:close()
+  end)
+end
+
+local function readStateFile()
+  -- Restores volatile runtime state from the file.  Returns a table of
+  -- key→string pairs, or nil if the file does not exist or cannot be read.
+  local ok, result = pcall(function()
+    local f = io.open(STATE_FILE_PATH, "r")
+    if not f then return nil end
+    local data = {}
+    for line in f:lines() do
+      local k, v = line:match("^([^=]+)=(.*)$")
+      if k then
+        if v == "nil" then
+          data[k] = nil
+        else
+          data[k] = v
+        end
+      end
+    end
+    f:close()
+    return data
+  end)
+  if ok then return result end
+  return nil
 end
 
 local MAP_PROVIDER_LABELS = {
@@ -2186,10 +2373,10 @@ local function applyConfig()
   end
 
   if mapStatus.conf.mapProvider == 0 then
-    mapStatus.mapZoomLevel = max(1, mapStatus.conf.mapZoomMin or 1)
+    mapStatus.mapZoomLevel = max(1, tonumber(mapStatus.conf.mapZoomMin) or 1)
   else
-    local zMin = mapStatus.conf.mapZoomMin or 1
-    local zMax = mapStatus.conf.mapZoomMax or 20
+    local zMin = tonumber(mapStatus.conf.mapZoomMin) or 1
+    local zMax = tonumber(mapStatus.conf.mapZoomMax) or 20
 
     local availableMin, availableMax = getAvailableZoomBounds(mapStatus.conf.mapProvider, mapStatus.conf.mapTypeId)
     if availableMin ~= nil and availableMax ~= nil then
@@ -2209,7 +2396,7 @@ local function applyConfig()
     end
 
     -- Clamp current zoom into the effective range (never reset to a default).
-    local cur = mapStatus.mapZoomLevel or zMin
+    local cur = tonumber(mapStatus.mapZoomLevel) or zMin
     if cur < zMin then cur = zMin elseif cur > zMax then cur = zMax end
     mapStatus.mapZoomLevel = cur
   end
@@ -2314,12 +2501,12 @@ local function configure(widget)
     end,
     function(value)
       -- Keep unified zoom range valid and clamp current zoom into that range.
-      local min = mapStatus.conf.mapZoomMin or 1
+      local min = tonumber(mapStatus.conf.mapZoomMin) or 1
       if value < min then
         value = min
       end
       mapStatus.conf.mapZoomMax = value
-      if mapStatus.mapZoomLevel > value then
+      if (tonumber(mapStatus.mapZoomLevel) or 1) > value then
         mapStatus.mapZoomLevel = value
       end
     end
@@ -2333,12 +2520,12 @@ local function configure(widget)
     end,
     function(value)
       -- Keep unified zoom range valid and clamp current zoom into that range.
-      local max = mapStatus.conf.mapZoomMax or 20
+      local max = tonumber(mapStatus.conf.mapZoomMax) or 20
       if value > max then
         value = max
       end
       mapStatus.conf.mapZoomMin = value
-      if mapStatus.mapZoomLevel < value then
+      if (tonumber(mapStatus.mapZoomLevel) or 1) < value then
         mapStatus.mapZoomLevel = value
       end
     end
@@ -2346,8 +2533,8 @@ local function configure(widget)
 
   line = form.addLine("Waypoint download (INAV)")
   form.addBooleanField(line, nil,
-    function() return mapStatus.conf.wpDownload end,
-    function(value) mapStatus.conf.wpDownload = value end
+    function() return mapStatus.conf.wpDownload == true end,
+    function(value) mapStatus.conf.wpDownload = value == true end
   )
 
   line = form.addLine("Zoom control")
@@ -2544,16 +2731,29 @@ end
 local function read(widget)
   if not widget then return end
 
-  -- Slot 0: hidden version marker.
+  -- Slot 0: hidden schema marker.
   -- v1.0 had no marker, so slot 0 holds horSpeedUnit (a small integer 1-4).
-  -- v1.1+ writes WIDGET_VERSION (a string like "1.1.0") as the first slot.
+  -- v2.0 stored a version string like "2.0-dev3"; v2.1+ stores STORAGE_SCHEMA (integer).
+  -- Extract the leading integer to unify both formats: "2.0-dev3"→2, 2→2, nil→nil.
   local slot0 = storage.read("_settingsVersion")
+  local schema = tonumber(tostring(slot0 or ""):match("^(%d+)"))
 
-  if slot0 ~= WIDGET_VERSION then
+  if schema ~= STORAGE_SCHEMA then
     -- Version mismatch or v1.0 data → drain ALL remaining old slots so
     -- ETHOS’ positional counter is fully consumed, then apply defaults.
     -- On the next write() the current version and clean defaults are saved.
     applyConfig()
+    -- Try to restore runtime state (observation marker, default position, zoom)
+    -- from the file even across version bumps so the user doesn't lose them.
+    local state = readStateFile()
+    if state then
+      mapStatus.observationLat = tonumber(state.observationLat)
+      mapStatus.observationLon = tonumber(state.observationLon)
+      mapStatus.conf.defaultLat = tonumber(state.defaultLat)
+      mapStatus.conf.defaultLon = tonumber(state.defaultLon)
+      local savedZoom = tonumber(state.mapZoomLevel)
+      mapStatus.mapZoomLevel = savedZoom or mapStatus.conf.mapZoomDefault or 18
+    end
     return
   end
 
@@ -2586,17 +2786,18 @@ local function read(widget)
   mapStatus.conf.sensorSpeed = storageToConfig("sensorSpeed", nil)
   mapStatus.conf.wpDownload = storageToConfig("wpDownload", true)
 
-  -- Observation marker persistence
-  mapStatus.observationLat = storageToConfig("observationLat", nil)
-  mapStatus.observationLon = storageToConfig("observationLon", nil)
-
-  -- Default position persistence
-  mapStatus.conf.defaultLat = storageToConfig("defaultLat", nil)
-  mapStatus.conf.defaultLon = storageToConfig("defaultLon", nil)
-
-  -- Restore persisted zoom level (appended at end to keep positional storage compatible).
-  local savedZoom = tonumber(storageToConfig("mapZoomLevel", nil))
-  mapStatus.mapZoomLevel = savedZoom or mapStatus.conf.mapZoomDefault or 18
+  -- Restore runtime state from file (observation marker, default position, zoom level).
+  local state = readStateFile()
+  if state then
+    mapStatus.observationLat = tonumber(state.observationLat)
+    mapStatus.observationLon = tonumber(state.observationLon)
+    mapStatus.conf.defaultLat = tonumber(state.defaultLat)
+    mapStatus.conf.defaultLon = tonumber(state.defaultLon)
+    local savedZoom = tonumber(state.mapZoomLevel)
+    mapStatus.mapZoomLevel = savedZoom or mapStatus.conf.mapZoomDefault or 18
+  else
+    mapStatus.mapZoomLevel = mapStatus.conf.mapZoomDefault or 18
+  end
 
   applyConfig()
 end
@@ -2604,8 +2805,8 @@ end
 local function write(widget)
   if not widget then return end
 
-  -- Slot 0: version marker (always first).
-  storage.write("_settingsVersion", WIDGET_VERSION)
+  -- Slot 0: schema marker (always first).
+  storage.write("_settingsVersion", STORAGE_SCHEMA)
 
   storage.write("horSpeedUnit", mapStatus.conf.horSpeedUnit)
   storage.write("vertSpeedUnit", mapStatus.conf.vertSpeedUnit)
@@ -2617,8 +2818,8 @@ local function write(widget)
   storage.write("mapZoomDefault", mapStatus.conf.mapZoomDefault)
   storage.write("mapZoomMin", mapStatus.conf.mapZoomMin)
   storage.write("mapZoomMax", mapStatus.conf.mapZoomMax)
-  storage.write("enableDebugLog", mapStatus.conf.enableDebugLog)
-  storage.write("enablePerfProfile", mapStatus.conf.enablePerfProfile)
+  storage.write("enableDebugLog", mapStatus.conf.enableDebugLog == true)
+  storage.write("enablePerfProfile", mapStatus.conf.enablePerfProfile == true)
   storage.write("uavSymbol", mapStatus.conf.uavSymbol)
   storage.write("zoomControl", mapStatus.conf.zoomControl)
   storage.write("zoomChannel", mapStatus.conf.zoomChannel)
@@ -2633,18 +2834,10 @@ local function write(widget)
   storage.write("sensorGpsLon", mapStatus.conf.sensorGpsLon)
   storage.write("sensorHeading", mapStatus.conf.sensorHeading)
   storage.write("sensorSpeed", mapStatus.conf.sensorSpeed)
-  storage.write("wpDownload", mapStatus.conf.wpDownload)
+  storage.write("wpDownload", mapStatus.conf.wpDownload == true)
 
-  -- Observation marker persistence
-  storage.write("observationLat", mapStatus.observationLat)
-  storage.write("observationLon", mapStatus.observationLon)
-
-  -- Default position persistence
-  storage.write("defaultLat", mapStatus.conf.defaultLat)
-  storage.write("defaultLon", mapStatus.conf.defaultLon)
-
-  -- Persisted zoom level (appended at end to keep positional storage compatible).
-  storage.write("mapZoomLevel", mapStatus.mapZoomLevel)
+  -- Persist runtime state (observation, default position, zoom) to file
+  writeStateFile()
 
   applyConfig()
   mapLibs.resetLib.resetLayout(widget)
