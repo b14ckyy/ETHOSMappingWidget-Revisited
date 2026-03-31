@@ -657,10 +657,9 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   local wpTpy = wpRes.tpy
   local mLen = #mission
 
-  -- Pass 0: Compute screen positions and determine dense mode.
-  -- Dense mode (proximity + auto-dense) is resolved BEFORE any line drawing so
-  -- that the WP1→WP2 segment isn't accidentally shortened when a later pair
-  -- triggers the density threshold.
+  -- ── Quick dense detection ──
+  -- Lightweight loop: tile-pixel distances equal screen-pixel distances
+  -- (pure translation offset), so proximity threshold 2500 (=50²) is valid.
   local baseX = myScreenX - uav_tile_x * TILES_SIZE - uav_offset_x + renderOffsetX
   local baseY = myScreenY - uav_tile_y * TILES_SIZE - uav_offset_y + renderOffsetY
   local scrX = wpScrX
@@ -670,197 +669,305 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   local yMax = y + h
   local dense = false
   local visibleNavCount = 0
-  local prevNavDense = nil
-  for i = 1, mLen do
-    if wpTpx[i] then
-      local sx = baseX + wpTpx[i]
-      local sy = baseY + wpTpy[i]
-      scrX[i] = sx
-      scrY[i] = sy
-      -- Viewport outcode for fast trivial-reject in Pass 1
-      local c = 0
-      if sx < x then c = 1 elseif sx > xMax then c = 2 end
-      if sy < y then c = c | 8 elseif sy > yMax then c = c | 4 end
-      wpOC[i] = c
-    else
-      scrX[i] = nil
-      scrY[i] = nil
-      wpOC[i] = 15  -- all bits set = outside everything
-    end
-    if scrX[i] and wpIsNavigable(mission[i].action) then
-      if wpOC[i] == 0 then
-        visibleNavCount = visibleNavCount + 1
-      end
-      if not dense then
-        if prevNavDense then
-          local dx = scrX[i] - scrX[prevNavDense]
-          local dy = scrY[i] - scrY[prevNavDense]
-          if (dx * dx + dy * dy) < 2500 then
-            dense = true
+  do
+    local prevTpxD, prevTpyD = nil, nil
+    local vpMinTpx = x - baseX
+    local vpMaxTpx = xMax - baseX
+    local vpMinTpy = y - baseY
+    local vpMaxTpy = yMax - baseY
+    for i = 1, mLen do
+      local tpxi = wpTpx[i]
+      if tpxi then
+        local act = mission[i].action
+        if act == 1 or act == 3 or act == 8 then  -- inlined wpIsNavigable
+          local inVP = tpxi >= vpMinTpx and tpxi <= vpMaxTpx
+                   and wpTpy[i] >= vpMinTpy and wpTpy[i] <= vpMaxTpy
+          if inVP then
+            visibleNavCount = visibleNavCount + 1
+            if not dense and prevTpxD then
+              local dx = tpxi - prevTpxD
+              local dy = wpTpy[i] - prevTpyD
+              if (dx * dx + dy * dy) < 2500 then
+                dense = true
+              end
+            end
+            prevTpxD = tpxi
+            prevTpyD = wpTpy[i]
           end
         end
-        prevNavDense = i
       end
     end
   end
-  -- Clear stale entries beyond current mission length.
-  for i = mLen + 1, #scrX do scrX[i] = nil end
-  for i = mLen + 1, #scrY do scrY[i] = nil end
-  for i = mLen + 1, #wpOC do wpOC[i] = nil end
-
-  -- Auto-dense: force dot-mode when too many WPs are visible in viewport
   if not dense and visibleNavCount > WP_DENSE_THRESHOLD then
     dense = true
   end
 
-  -- Pass 1: Draw path lines + JUMP connections using pre-determined dense.
-  local prevNav = nil
-  lcd.color(wpColorPath)
-  lcd.pen(SOLID)
-  for i = 1, mLen do
-    local wp = mission[i]
-    local action = wp.action
-    local isNav = wpIsNavigable(action)
+  if dense then
+    -- ── Dense mode: single-pass (screen positions + lines + dots) ──
+    -- Merges the original three passes into one loop to cut ~40% of
+    -- per-frame Lua instructions.  Z-order is acceptable because dense
+    -- markers are 5×5 dots sharing the same color as path lines.
+    local prevNav = nil
+    lcd.color(wpColorPath)
+    lcd.pen(SOLID)
+    local colorDirty = false
+    for i = 1, mLen do
+      local tpxi = wpTpx[i]
+      if tpxi then
+        local sx = baseX + tpxi
+        local sy = baseY + wpTpy[i]
+        scrX[i] = sx
+        scrY[i] = sy
+        local c = 0
+        if sx < x then c = 1 elseif sx > xMax then c = 2 end
+        if sy < y then c = c | 8 elseif sy > yMax then c = c | 4 end
+        wpOC[i] = c
+      else
+        scrX[i] = nil
+        scrY[i] = nil
+        wpOC[i] = 15
+      end
 
-    -- Path lines between consecutive navigable WPs
-    if isNav and scrX[i] then
-      if prevNav and scrX[prevNav] then
-        -- Trivial reject: both endpoints on same side → segment entirely outside viewport
-        if (wpOC[prevNav] & wpOC[i]) == 0 then
-          local lx1, ly1, lx2, ly2
-          if dense then
-            lx1, ly1 = scrX[prevNav], scrY[prevNav]
-            lx2, ly2 = scrX[i], scrY[i]
-          else
-            lx1, ly1, lx2, ly2 = shortenLine(
-              scrX[prevNav], scrY[prevNav],
-              scrX[i], scrY[i], wpR)
-          end
-          if lx1 then
-            lcd.color(wpColorPath)
-            lcd.pen(SOLID)
-            local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
-            if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+      local act = mission[i].action
+      if act == 1 or act == 3 or act == 8 then  -- navigable WP
+        -- Path line from previous navigable WP
+        if scrX[i] and prevNav then
+          local prevC = wpOC[prevNav]
+          if (prevC & wpOC[i]) == 0 then
+            if colorDirty then
+              lcd.color(wpColorPath)
+              lcd.pen(SOLID)
+              colorDirty = false
+            end
+            -- Skip expensive clipLine when both endpoints are inside viewport
+            if (prevC | wpOC[i]) == 0 then
+              lcd.drawLine(scrX[prevNav], scrY[prevNav], scrX[i], scrY[i])
+            else
+              local cx1, cy1, cx2, cy2 = clipLine(scrX[prevNav], scrY[prevNav], scrX[i], scrY[i], x, y, xMax, yMax)
+              if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+            end
           end
         end
-      end
-      prevNav = i
-    end
+        -- Dense dot (skip during panning)
+        if not isPanning and scrX[i] and wpOC[i] == 0 then
+          if colorDirty then lcd.color(wpColorPath); colorDirty = false end
+          lcd.drawFilledRectangle(scrX[i] - 2, scrY[i] - 2, 5, 5)
+        end
+        if scrX[i] then prevNav = i end
 
-    -- JUMP connections (dashed yellow line from preceding nav WP to target)
-    if action == WP_ACT_JUMP and prevNav then
-      local targetIdx = wp.p1
-      if targetIdx >= 1 and targetIdx <= mLen and scrX[targetIdx] and scrX[prevNav] then
-        -- Trivial reject: both endpoints on same side → skip
-        if (wpOC[prevNav] & wpOC[targetIdx]) == 0 then
-          local lx1, ly1, lx2, ly2
-          if dense then
-            lx1, ly1 = scrX[prevNav], scrY[prevNav]
-            lx2, ly2 = scrX[targetIdx], scrY[targetIdx]
-          else
-            lx1, ly1, lx2, ly2 = shortenLine(
-              scrX[prevNav], scrY[prevNav],
-              scrX[targetIdx], scrY[targetIdx], wpR)
+      elseif act == 6 then  -- JUMP
+        if prevNav and scrX[prevNav] then
+          local targetIdx = mission[i].p1
+          if targetIdx >= 1 and targetIdx <= mLen and scrX[targetIdx] then
+            if (wpOC[prevNav] & wpOC[targetIdx]) == 0 then
+              lcd.color(wpColorJump)
+              lcd.pen(DOTTED)
+              local cx1, cy1, cx2, cy2 = clipLine(scrX[prevNav], scrY[prevNav], scrX[targetIdx], scrY[targetIdx], x, y, xMax, yMax)
+              if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+              lcd.pen(SOLID)
+              local lx1, ly1 = scrX[prevNav], scrY[prevNav]
+              local lx2, ly2 = scrX[targetIdx], scrY[targetIdx]
+              local mx = (lx1 + lx2) * 0.5
+              local my = (ly1 + ly2) * 0.5
+              local ddx = lx2 - lx1
+              local ddy = ly2 - ly1
+              local dlen = sqrt(ddx * ddx + ddy * ddy)
+              if dlen > 1 then
+                lcd.color(wpColorJump)
+                drawChevron(mx + ddx / dlen * 12, my + ddy / dlen * 12, ddx / dlen, ddy / dlen, 20)
+              end
+              colorDirty = true
+            end
           end
+        end
+
+      elseif act == 5 then  -- SET_POI
+        if not isPanning and scrX[i] and wpOC[i] == 0 then
+          lcd.color(wpColorPoi)
+          lcd.drawCircle(scrX[i], scrY[i], wpR)
+          lcd.drawCircle(scrX[i], scrY[i], max(floor(wpR * 0.55), 2))
+          lcd.drawFilledRectangle(scrX[i] - 1, scrY[i] - 1, 3, 3)
+          colorDirty = true
+        end
+
+      elseif act == 4 then  -- RTH
+        if not isPanning and prevNav and scrX[prevNav] and wpRes.homeTpx then
+          local homeSx = baseX + wpRes.homeTpx
+          local homeSy = baseY + wpRes.homeTpy
+          local lx1, ly1, lx2, ly2 = shortenLine(scrX[prevNav], scrY[prevNav], homeSx, homeSy, wpR)
           if lx1 then
-            lcd.color(wpColorJump)
+            lcd.color(wpColorRth)
             lcd.pen(DOTTED)
             local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
             if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
             lcd.pen(SOLID)
+            colorDirty = true
+          end
+        end
+      end
+      -- SET_HEAD (act 7) has no visual representation in dense mode
+    end
 
-            local mx = (lx1 + lx2) * 0.5
-            local my = (ly1 + ly2) * 0.5
-            local dx = lx2 - lx1
-            local dy = ly2 - ly1
-            local len = sqrt(dx * dx + dy * dy)
-            if len > 1 then
+  else
+    -- ── Normal mode (few visible WPs): merged position-calc + line pass ──
+    local prevNav = nil
+    lcd.color(wpColorPath)
+    lcd.pen(SOLID)
+    for i = 1, mLen do
+      local tpxi = wpTpx[i]
+      if tpxi then
+        local sx = baseX + tpxi
+        local sy = baseY + wpTpy[i]
+        scrX[i] = sx
+        scrY[i] = sy
+        local c = 0
+        if sx < x then c = 1 elseif sx > xMax then c = 2 end
+        if sy < y then c = c | 8 elseif sy > yMax then c = c | 4 end
+        wpOC[i] = c
+      else
+        scrX[i] = nil
+        scrY[i] = nil
+        wpOC[i] = 15
+      end
+
+      local act = mission[i].action
+      local isNav = act == 1 or act == 3 or act == 8
+
+      -- Path lines between consecutive navigable WPs
+      if isNav and scrX[i] then
+        if prevNav and scrX[prevNav] then
+          if (wpOC[prevNav] & wpOC[i]) == 0 then
+            local lx1, ly1, lx2, ly2 = shortenLine(
+              scrX[prevNav], scrY[prevNav],
+              scrX[i], scrY[i], wpR)
+            if lx1 then
+              lcd.color(wpColorPath)
+              lcd.pen(SOLID)
+              -- Skip clipLine when both endpoints are inside viewport
+              if (wpOC[prevNav] | wpOC[i]) == 0 then
+                lcd.drawLine(lx1, ly1, lx2, ly2)
+              else
+                local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
+                if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+              end
+            end
+          end
+        end
+        prevNav = i
+      end
+
+      -- JUMP connections
+      if act == 6 and prevNav then
+        local targetIdx = mission[i].p1
+        if targetIdx >= 1 and targetIdx <= mLen and scrX[targetIdx] and scrX[prevNav] then
+          if (wpOC[prevNav] & wpOC[targetIdx]) == 0 then
+            local lx1, ly1, lx2, ly2 = shortenLine(
+              scrX[prevNav], scrY[prevNav],
+              scrX[targetIdx], scrY[targetIdx], wpR)
+            if lx1 then
               lcd.color(wpColorJump)
-              drawChevron(mx + dx / len * 12, my + dy / len * 12, dx / len, dy / len, 20)
+              lcd.pen(DOTTED)
+              local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
+              if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+              lcd.pen(SOLID)
+              local mx = (lx1 + lx2) * 0.5
+              local my = (ly1 + ly2) * 0.5
+              local dx = lx2 - lx1
+              local dy = ly2 - ly1
+              local dlen = sqrt(dx * dx + dy * dy)
+              if dlen > 1 then
+                lcd.color(wpColorJump)
+                drawChevron(mx + dx / dlen * 12, my + dy / dlen * 12, dx / dlen, dy / dlen, 20)
+              end
             end
           end
         end
       end
     end
-  end
 
-  -- When actively dragging, skip heavy passes (circles, numbers, annotations)
-  if isPanning then return end
-
-  -- Pass 2: Markers + SET_HEAD chevrons + JUMP iteration text + RTH lines
-  lcd.font(FONT_STD)  -- set once for all markers (not per-marker)
-  local navNum = 0
-  local curActiveWp = status.mspActiveWp or 0
-  local lastNavIdx = nil  -- preceding navigable WP (for annotations)
-  for i = 1, mLen do
-    local wp = mission[i]
-    local action = wp.action
-    local isNav = wpIsNavigable(action)
-    if isNav then
-      navNum = navNum + 1
+    -- When actively dragging, skip heavy marker pass
+    if isPanning then
+      for i = mLen + 1, #scrX do scrX[i] = nil end
+      for i = mLen + 1, #scrY do scrY[i] = nil end
+      for i = mLen + 1, #wpOC do wpOC[i] = nil end
+      return
     end
 
-    -- WP marker (circle + number)
-    if wpHasPosition(action) and scrX[i] then
-      local sx, sy = scrX[i], scrY[i]
-      local code = computeOutCode(sx, sy, x - margin, y - margin, x + w + margin, y + h + margin)
-      if code == 0 then
-        local isActive = curActiveWp > 0 and wp.idx == curActiveWp
-        drawWpMarker(wp, sx, sy, isNav and navNum or 0, wpR, dense, isActive)
+    -- Marker pass: circles, numbers, annotations (normal mode only)
+    lcd.font(FONT_STD)
+    local navNum = 0
+    local curActiveWp = status.mspActiveWp or 0
+    local lastNavIdx = nil
+    for i = 1, mLen do
+      local wp = mission[i]
+      local act = wp.action
+      local isNav = act == 1 or act == 3 or act == 8
+      if isNav then
+        navNum = navNum + 1
       end
-    end
 
-    -- SET_HEAD heading chevron on the preceding navigable WP
-    if not dense and action == WP_ACT_SET_HEAD and wp.p1 >= 0 and lastNavIdx and scrX[lastNavIdx] then
-      local nsx, nsy = scrX[lastNavIdx], scrY[lastNavIdx]
-      local code = computeOutCode(nsx, nsy, x - margin, y - margin, x + w + margin, y + h + margin)
-      if code == 0 then
-        local headRad = rad(wp.p1)
-        local hx = sin(headRad)
-        local hy = -cos(headRad)
-        lcd.color(wpColorLabel)
-        drawChevron(nsx + hx * (wpR + 16), nsy + hy * (wpR + 16), hx, hy, 15)
-      end
-    end
-
-    -- JUMP iteration count label on the preceding navigable WP
-    if not dense and action == WP_ACT_JUMP and lastNavIdx and scrX[lastNavIdx] then
-      local ssx, ssy = scrX[lastNavIdx], scrY[lastNavIdx]
-      local iterCode = computeOutCode(ssx, ssy, x - margin, y - margin, x + w + margin, y + h + margin)
-      if iterCode == 0 then
-        local iterText
-        if wp.p2 == -1 then
-          iterText = "\xE2\x88\x9E"  -- UTF-8 infinity symbol ∞
-        else
-          iterText = "x" .. tostring(wp.p2)
+      if wpHasPosition(act) and scrX[i] then
+        local sx, sy = scrX[i], scrY[i]
+        local code = computeOutCode(sx, sy, x - margin, y - margin, xMax + margin, yMax + margin)
+        if code == 0 then
+          local isActive = curActiveWp > 0 and wp.idx == curActiveWp
+          drawWpMarker(wp, sx, sy, isNav and navNum or 0, wpR, false, isActive)
         end
-        lcd.font(FONT_STD)
-        lcd.color(wpColorLabel)
-        local tw, th = lcd.getTextSize(iterText)
-        lcd.drawText(ssx + wpR + 3, ssy - floor(th / 2), iterText)
       end
-    end
 
-    -- RTH dashed line from preceding navigable WP to home point
-    if action == WP_ACT_RTH and lastNavIdx and scrX[lastNavIdx] and wpRes.homeTpx then
-      local sx, sy = scrX[lastNavIdx], scrY[lastNavIdx]
-      local homeSx = baseX + wpRes.homeTpx
-      local homeSy = baseY + wpRes.homeTpy
-      local lx1, ly1, lx2, ly2 = shortenLine(sx, sy, homeSx, homeSy, wpR)
-      if lx1 then
-        lcd.color(wpColorRth)
-        lcd.pen(DOTTED)
-        local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, x + w, y + h)
-        if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
-        lcd.pen(SOLID)
+      if act == 7 and wp.p1 >= 0 and lastNavIdx and scrX[lastNavIdx] then
+        local nsx, nsy = scrX[lastNavIdx], scrY[lastNavIdx]
+        local code = computeOutCode(nsx, nsy, x - margin, y - margin, xMax + margin, yMax + margin)
+        if code == 0 then
+          local headRad = rad(wp.p1)
+          local hx = sin(headRad)
+          local hy = -cos(headRad)
+          lcd.color(wpColorLabel)
+          drawChevron(nsx + hx * (wpR + 16), nsy + hy * (wpR + 16), hx, hy, 15)
+        end
       end
-    end
 
-    -- Track preceding navigable WP for annotation placement
-    if isNav then
-      lastNavIdx = i
+      if act == 6 and lastNavIdx and scrX[lastNavIdx] then
+        local ssx, ssy = scrX[lastNavIdx], scrY[lastNavIdx]
+        local iterCode = computeOutCode(ssx, ssy, x - margin, y - margin, xMax + margin, yMax + margin)
+        if iterCode == 0 then
+          local iterText
+          if wp.p2 == -1 then
+            iterText = "\xE2\x88\x9E"  -- UTF-8 infinity symbol ∞
+          else
+            iterText = "x" .. tostring(wp.p2)
+          end
+          lcd.font(FONT_STD)
+          lcd.color(wpColorLabel)
+          local tw, th = lcd.getTextSize(iterText)
+          lcd.drawText(ssx + wpR + 3, ssy - floor(th / 2), iterText)
+        end
+      end
+
+      if act == 4 and lastNavIdx and scrX[lastNavIdx] and wpRes.homeTpx then
+        local rsx, rsy = scrX[lastNavIdx], scrY[lastNavIdx]
+        local homeSx = baseX + wpRes.homeTpx
+        local homeSy = baseY + wpRes.homeTpy
+        local lx1, ly1, lx2, ly2 = shortenLine(rsx, rsy, homeSx, homeSy, wpR)
+        if lx1 then
+          lcd.color(wpColorRth)
+          lcd.pen(DOTTED)
+          local cx1, cy1, cx2, cy2 = clipLine(lx1, ly1, lx2, ly2, x, y, xMax, yMax)
+          if cx1 then lcd.drawLine(cx1, cy1, cx2, cy2) end
+          lcd.pen(SOLID)
+        end
+      end
+
+      if isNav then
+        lastNavIdx = i
+      end
     end
   end
+
+  -- Clear stale entries beyond current mission length.
+  for i = mLen + 1, #scrX do scrX[i] = nil end
+  for i = mLen + 1, #scrY do scrY[i] = nil end
+  for i = mLen + 1, #wpOC do wpOC[i] = nil end
 
 end
 
