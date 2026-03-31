@@ -362,14 +362,6 @@ function compute.update(w)
     totalStartMs = os_clock() * 1000
   end
 
-  -- Map task names to trace IDs for ftrace
-  local ft = libs and libs.ftrace
-  local traceIds = ft and {
-    ["wpProjection"] = 54,
-    ["trailProjection"] = 55,
-    ["tileGrid"] = 56,
-  }
-
   for i = 1, taskCount do
     local t = tasks[i]
     if dirty[t.key] then
@@ -377,10 +369,7 @@ function compute.update(w)
       if perfActive then
         taskStartMs = os_clock() * 1000
       end
-      local tId = traceIds and traceIds[t.name]
-      if tId then ft.enter(tId) end
       t.fn(status, libs, results)
-      if tId then ft.leave(tId) end
       dirty[t.key] = false
       if perfActive then
         perfAddMs("compute_" .. t.name .. "_ms", os_clock() * 1000 - taskStartMs)

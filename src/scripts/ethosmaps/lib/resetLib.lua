@@ -1,8 +1,5 @@
 local resetLib = {}
 local status = nil
-local libs = nil
-
--- flagEnabled() removed — use status.flagEnabled() (published by utils.init)
 
 -- Clears all entries from a table so cached layouts, tiles, and other transient state can be released.
 -- Sub-tables are collected by Lua GC once no references remain.
@@ -24,7 +21,6 @@ function resetLib.resetLayout(widget)
   if status.perfActive and status.perfProfileInc then
     status.perfProfileInc("gc_count", 2)
   end
-  -- GC wird jetzt periodisch im wakeup() ausgeführt
 end
 
 function resetLib.reset(widget)
@@ -33,13 +29,11 @@ function resetLib.reset(widget)
   if status.perfActive and status.perfProfileInc then
     status.perfProfileInc("gc_count", 2)
   end
-  -- GC wird jetzt periodisch im wakeup() ausgeführt
 end
 
 function resetLib.init(param_status, param_libs)
   -- Stores shared state references so reset helpers can mutate widget status and cooperate with sibling libraries.
   status = param_status
-  libs = param_libs
   return resetLib
 end
 

@@ -328,9 +328,6 @@ local function resolveWidget(widget)
   return mapStatus.widget
 end
 
--- configFlagEnabled removed — use mapStatus.flagEnabled (published by utils.init)
--- perfProfileEnabled() removed — use mapStatus.perfActive (cached boolean)
-
 local function perfEnsureMetric(metricName)
   local metrics = mapStatus.perfProfile.metrics
   local metric = metrics[metricName]
@@ -467,6 +464,8 @@ local function makeSourceInit(sourceName)
   end
 end
 
+local mspStateNames = { [0]="OFF", "CONNECTING", "GET_VERSION", "GET_WP_INFO", "DOWNLOADING", "DONE", "ERROR" }
+
 local mapLibs = {
   drawLib    = nil,
   resetLib   = nil,
@@ -505,9 +504,6 @@ local function initLibs()
   if mapLibs.mapLib == nil then mapLibs.mapLib = loadLib("maplib") end
   if mapLibs.compute == nil then mapLibs.compute = loadLib("compute") end
   if mapLibs.msp == nil then mapLibs.msp = loadLib("msp") end
-  -- ftrace is only loaded when performance profiling is enabled to avoid
-  -- its own instruction overhead triggering the ETHOS instruction limit.
-  if mapStatus.conf.enablePerfProfile and mapLibs.ftrace == nil then mapLibs.ftrace = loadLib("ftrace") end
 end
 
 local function checkSize(widget)
@@ -748,7 +744,6 @@ local function paintInner(widget)
     perfStartMs = perfNowMs()
     perfInc("paint_calls", 1)
   end
-  local ft = mapLibs.ftrace
   widget = resolveWidget(widget)
   if not widget then return end -- Safeguard: Ethos can call paint before a widget instance is fully available.
   lcd.color(mapStatus.colors.background)
@@ -759,38 +754,28 @@ local function paintInner(widget)
     mapStatus.lastScreen = widget.screen
   end
 
-  if ft then ft.enter(27) end -- checkSize
   local sizeOk = checkSize(widget)
-  if ft then ft.leave(27) end
   if not sizeOk then return end
 
   if not widget.ready then
-    if ft then ft.enter(28) end -- loadLayout
     loadLayout(widget)
-    if ft then ft.leave(28) end
   else
     if mapStatus.layout[widget.screen] ~= nil then
       local drawStartMs = nil
       if perfActive then
         drawStartMs = perfNowMs()
       end
-      if ft then ft.enter(2) end -- panel.draw
       mapStatus.layout[widget.screen].draw(widget)
-      if ft then ft.leave(2) end
       if perfActive then
         perfAddMs("layout_draw_ms", perfNowMs() - drawStartMs)
       end
     else
-      if ft then ft.enter(28) end -- loadLayout
       loadLayout(widget)
-      if ft then ft.leave(28) end
     end
   end
 
   if mapStatus.followLock and not gpsDataAvailable(mapStatus.telemetry.lat, mapStatus.telemetry.lon) then
-    if ft then ft.enter(23) end -- drawNoGPSData
     mapLibs.drawLib.drawNoGPSData(widget)
-    if ft then ft.leave(23) end
   end
   if perfActive then
     local paintElapsedMs = perfNowMs() - perfStartMs
@@ -805,31 +790,7 @@ local function paintInner(widget)
 end
 
 local function paint(widget)
-  local ft = mapLibs.ftrace
-  if ft then
-    ft.frameStart()
-    ft.enter(1) -- paint
-  end
-  local ok, err = pcall(paintInner, widget)
-  if ok then
-    if ft then
-      ft.leave(1)
-      ft.frameEnd(false)
-    end
-  else
-    if ft then
-      -- Don't record leave — paint didn't complete
-      ft.frameEnd(true, tostring(err))
-    end
-    -- Show error on screen so it's immediately visible
-    lcd.color(RED)
-    lcd.font(FONT_XS)
-    lcd.drawText(4, 4, "ERR: " .. tostring(err))
-    -- Log to debug file
-    if mapLibs.utils and mapLibs.utils.logDebug then
-      mapLibs.utils.logDebug("PAINT_ERR", tostring(err))
-    end
-  end
+  paintInner(widget)
 end
 
 local function event(widget, category, value, x, y)
@@ -964,7 +925,7 @@ local function event(widget, category, value, x, y)
       end
 
       -- IDLE/GRACE: consume if it was a zoom/lock/pin release, otherwise pass through
-      if mapStatus.consumeZoomRelease or hitPlus or hitMinus or hitLock or hitPin or hitMission then
+      if mapStatus.consumeZoomRelease or hitPlus or hitMinus or hitLock or hitPin then
         mapStatus.consumeZoomRelease = false
         system.killEvents(value)
         return true
@@ -1279,8 +1240,6 @@ end
 local function wakeupInner(widget)
   -- Runs recurring background work between paint calls and invalidates the LCD so Ethos schedules a redraw.
   local perfActive = mapStatus.perfActive
-  local ft = mapLibs.ftrace
-  if ft then ft.enter(50) end -- wakeup
   widget = resolveWidget(widget)
   if not widget then return end -- Safeguard: Ethos can schedule wakeup before the widget handle is ready.
   local now = getTime()
@@ -1293,7 +1252,6 @@ local function wakeupInner(widget)
   -- Drive MSP state machine FIRST to avoid SmartPort buffer overflow.
   -- Multiple poll() calls per cycle drain queued frames (each processes one chunk).
   if mapLibs and mapLibs.msp then
-    if ft then ft.enter(52) end -- msp.poll 10x
     local mspStartMs
     if perfActive then
       mspStartMs = perfNowMs()
@@ -1304,7 +1262,6 @@ local function wakeupInner(widget)
     if perfActive and mspStartMs then
       perfAddMs("msp_poll_ms", perfNowMs() - mspStartMs)
     end
-    if ft then ft.leave(52) end
   end
 
   -- Pan state machine: timeout-based release and grace expiry
@@ -1410,16 +1367,13 @@ local function wakeupInner(widget)
     if perfActive then
       bgStartMs = perfNowMs()
     end
-    if ft then ft.enter(51) end -- bgtasks
     bgtasks(widget)
-    if ft then ft.leave(51) end
     if perfActive then
       perfAddMs("bgtasks_ms", perfNowMs() - bgStartMs)
     end
   end
 
   -- MSP status logging and mission publish (polling done at top of wakeup)
-  if ft then ft.enter(62) end -- MSP publish block
   if mapLibs and mapLibs.msp then
     local mspState = mapLibs.msp.getState()
 
@@ -1428,7 +1382,7 @@ local function wakeupInner(widget)
       local now = getTime()
       if not mapStatus._mspLastStatusLog or (now - mapStatus._mspLastStatusLog) > 100 then
         mapStatus._mspLastStatusLog = now
-        local stateNames = { [0]="OFF", "CONNECTING", "GET_VERSION", "GET_WP_INFO", "DOWNLOADING", "DONE", "ERROR" }
+        local stateNames = mspStateNames
         mapLibs.utils.logDebug("MSP_DBG", fmt("state=%s fc=%s(%s) transport=%s wpCount=%d done=%s active=%s missions=%d published=%s",
             stateNames[mspState.state] or tostring(mspState.state),
             tostring(mspState.fcVariant),
@@ -1493,7 +1447,6 @@ local function wakeupInner(widget)
     mapStatus.mspNavMode  = mspState.navMode or 0
     mapStatus.mspActiveWp = mspState.activeWpNumber or 0
   end
-  if ft then ft.leave(62) end -- MSP publish block
 
   -- Trail accumulation (moved from paint to keep trig out of the instruction budget)
   if mapLibs and mapLibs.mapLib then
@@ -1502,28 +1455,23 @@ local function wakeupInner(widget)
 
   -- Run compute scheduler (Phase 1+: staggered task processing)
   if mapLibs and mapLibs.compute then
-    if ft then ft.enter(53) end -- compute.update
     -- Phase 4: tile grid must update every cycle (GPS, pan, heading change continuously).
     -- loadAndCenterTiles has its own 25ms throttle to skip redundant rebuilds.
     mapLibs.compute.setDirty("needsTileGrid")
     mapLibs.compute.update(widget)
-    if ft then ft.leave(53) end
   end
 
   if mapLibs and mapLibs.tileLoader then
-    if ft then ft.enter(59) end -- tileLoader.processQueue
     if mapLibs.tileLoader.getQueueLength() > 0 then
       local tilesLoaded = mapLibs.tileLoader.processQueue(3)
       if perfActive and tilesLoaded > 0 then
         perfInc("tiles_loaded", tilesLoaded)
       end
     end
-    if ft then ft.leave(59) end -- tileLoader.processQueue
   end
 
   if mapStatus.debugEnabled
       and mapLibs and mapLibs.utils and mapLibs.utils.flushLogs then
-    if ft then ft.enter(60) end -- utils.flushLogs
     local flushStartMs = nil
     if perfActive then
       flushStartMs = perfNowMs()
@@ -1532,10 +1480,7 @@ local function wakeupInner(widget)
     if perfActive then
       perfAddMs("log_flush_ms", perfNowMs() - flushStartMs)
     end
-    if ft then ft.leave(60) end -- utils.flushLogs
   end
-
-  if ft then ft.leave(50) end -- wakeup
 end
 
 local function wakeup(widget)
@@ -1546,24 +1491,7 @@ local function wakeup(widget)
     perfInc("wakeup_calls", 1)
   end
 
-  local ft = mapLibs.ftrace
-  if ft then ft.frameStart() end
-
-  local ok, err = pcall(wakeupInner, widget)
-  if not ok then
-    -- Log error
-    if mapLibs.utils and mapLibs.utils.logDebug then
-      mapLibs.utils.logDebug("WAKEUP_ERR", tostring(err), true)
-    end
-    -- Trigger ftrace dump for wakeup crash
-    if ft then
-      ft.frameEnd(true, tostring(err))
-    end
-  else
-    if ft then
-      ft.frameEnd(false)
-    end
-  end
+  wakeupInner(widget)
 
   if perfActive then
     perfAddMs("wakeup_total_ms", perfNowMs() - perfStartMs)
@@ -1687,9 +1615,6 @@ local function create()
   -- Reset session logging flag so fresh widget initializations emit a new debug marker.
   mapStatus.sessionLogged = false
 
-
-  mapStatus.perfProfileAddMs = perfAddMs
-  mapStatus.perfProfileInc = perfInc
 
   -- Emit a visible session marker once so each debug log session has a clear start record.
   logDebugSessionStart("widget create")
@@ -2297,10 +2222,9 @@ logDebugSessionStart = function(reason)
     mapLibs.utils.logDebug("SYSTEM", "system.getVersion() not available", true)
   end
 
-  -- Wrap snapshot and tree in pcall so a crash in one doesn't prevent the other from running.
-  pcall(logSettingsSnapshot)
-  pcall(logDirectoryTree, "/bitmaps/ethosmaps/maps", "FOLDER TREE SNAPSHOT: ethosmaps/maps")
-  pcall(logDirectoryTree, "/bitmaps/yaapu/maps", "FOLDER TREE SNAPSHOT: yaapu/maps")
+  logSettingsSnapshot()
+  logDirectoryTree("/bitmaps/ethosmaps/maps", "FOLDER TREE SNAPSHOT: ethosmaps/maps")
+  logDirectoryTree("/bitmaps/yaapu/maps", "FOLDER TREE SNAPSHOT: yaapu/maps")
 end
 
 local function providerLabelById(providerId)

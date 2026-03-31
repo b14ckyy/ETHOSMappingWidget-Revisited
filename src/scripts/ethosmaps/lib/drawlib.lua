@@ -24,9 +24,9 @@ local floor, max, min = math.floor, math.max, math.min
 local sin, cos, rad = math.sin, math.cos, math.rad
 local sub = string.sub
 local tinsert = table.insert
+local pairs = pairs
 
 local status = nil
-local libs = nil
 
 local drawLib = {}
 local bitmaps = {}
@@ -75,7 +75,7 @@ local function safeSensorName(sensor)
   end
   local barTickSerial = (status and status.barTickSerial) or 0
   if barTickSerial ~= _sensorNameCacheTick then
-    _sensorNameCache = {}
+    for k in pairs(_sensorNameCache) do _sensorNameCache[k] = nil end
     _sensorNameCacheTick = barTickSerial
   end
   local key = tostring(sensor)
@@ -138,11 +138,14 @@ local function safeSensorValueText(sensor)
     end
     topBarValueCacheCount = freshCount
   end
-  topBarValueCache[cacheKey] = {
-    tickSerial = barTickSerial,
-    text = valueText
-  }
-  topBarValueCacheCount = topBarValueCacheCount + 1
+  local cached = topBarValueCache[cacheKey]
+  if cached then
+    cached.tickSerial = barTickSerial
+    cached.text = valueText
+  else
+    topBarValueCache[cacheKey] = { tickSerial = barTickSerial, text = valueText }
+    topBarValueCacheCount = topBarValueCacheCount + 1
+  end
 
   return valueText
 end
@@ -652,7 +655,6 @@ end
 function drawLib.init(param_status, param_libs)
   -- Stores shared state references so drawing helpers can read status values and call sibling libraries.
   status = param_status
-  libs = param_libs
   topBarValueCache = {}
   topBarValueCacheCount = 0
   return drawLib

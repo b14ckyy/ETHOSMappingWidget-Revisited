@@ -38,8 +38,6 @@ local os_clock = os.clock
 local status = nil
 local libs   = nil
 
--- flagEnabled() removed — use status.flagEnabled() (published by utils.init)
-
 -- Spatial ring radius for cache eviction (tiles beyond this radius around the visible
 -- window are discarded when trimCache() is called from maplib).
 local TILE_CACHE_REFERENCE_MARGIN_TILES = 0
@@ -233,8 +231,6 @@ function tileLoader.getBitmap(tilePath)
   -- drawTiles() calls this so the paint path never touches the SD card.
   return mapBitmapByPath[tilePath]
 end
-
--- getFallbackBitmap() removed — was an identical alias for getNoMapBitmap().
 
 function tileLoader.getNoMapBitmap()
   -- Returns the shared "NO MAP DATA" bitmap preloaded outside the paint path.

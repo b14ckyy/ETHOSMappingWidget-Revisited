@@ -18,8 +18,6 @@
 -- along with this program; if not, see <http://www.gnu.org/licenses>.
 
 
--- getTime() removed — use status.getTime() (published by main.lua)
-
 -- Cached stdlib references for embedded Lua performance (avoid _ENV hash lookups).
 local tostring = tostring
 local floor, max, min, ceil = math.floor, math.max, math.min, math.ceil
@@ -203,10 +201,7 @@ function panel.draw(widget)
   status.mapLastZoom = status.mapZoomLevel
 
   -- Draw the map viewport for the current layout.
-  local ft = libs.ftrace
-  if ft then ft.enter(3) end -- drawMap
   libs.mapLib.drawMap(widget, 0, mapY, w, mapH, status.mapZoomLevel, mapTilesX, mapTilesY, telemetry.yaw or telemetry.cog, mapNeedsUpdate)
-  if ft then ft.leave(3) end
 
   -- Draw the dedicated left-side zoom buttons.
   local scaleFactor = 0.15 + 0.8 * status.scaleX
@@ -225,7 +220,6 @@ function panel.draw(widget)
   end
 
   -- Draw the actual zoom buttons (hidden when zoom is controlled via RC channel).
-  if ft then ft.enter(20) end -- zoom buttons block
   if (status.conf.zoomControl or 0) == 0 then
     libs.drawLib.drawBitmap(btnX, btnYPlus, "zoom_plus", btnSize, btnSize)
     libs.drawLib.drawBitmap(btnX, btnYMinus, "zoom_minus", btnSize, btnSize)
@@ -243,7 +237,6 @@ function panel.draw(widget)
       libs.drawLib.drawBitmap(lockBtnX, btnYPlus, "pinbutton", btnSize, btnSize)
     end
   end
-  if ft then ft.leave(20) end -- zoom buttons block
 
   -- Crosshair: red "+" at viewport center when follow-unlocked
   if status.panDragEnabled and not status.followLock then
@@ -280,12 +273,9 @@ function panel.draw(widget)
 
     -- Bar content and map overlays frozen during active pan to save cycles.
     if not panActive then
-    if ft then ft.enter(18) end -- drawTopBar
     libs.drawLib.drawTopBar(widget, 0, topH)
-    if ft then ft.leave(18) end
 
-    if ft then ft.enter(29) end -- overlays block
-    lcd.font(overlayFont)
+    lcd.font(verticalMedium and FONT_XS or FONT_S)
 
     local overlayPadX = max(6, floor(8 * sx))
     local overlayPadY = max(3, floor(4 * sy))
@@ -314,13 +304,11 @@ function panel.draw(widget)
     lcd.drawFilledRectangle(zoomBoxX, zoomBoxY, zoomBoxW, zoomBoxH)
     lcd.color(colors.white)
     lcd.drawText(zoomBoxX + floor((zoomBoxW - zoomTw) / 2), zoomBoxY + floor((zoomBoxH - zoomTh) / 2), zoomText)
-    if ft then ft.leave(29) end -- overlays block
     end -- not panActive (top bar content + overlays)
   end -- not horizontalTiny
 
   -- Draw the bottom flight-data bar except on the narrowest horizontal layouts.
   if not panActive and not horizontalTiny then
-    if ft then ft.enter(21) end -- bottom bar block
     local barSnapshot = getBarSnapshot()
 
     lcd.color(colors.black)
@@ -387,7 +375,6 @@ function panel.draw(widget)
         _cachedHDistStr,
         conf.distUnitLabel, barFont, barMetaFont, barFont, colors.white, labelColor, false, RIGHT)
     end
-    if ft then ft.leave(21) end -- bottom bar block
   end
   if not panActive and telemetry.lat ~= nil and (telemetry.homeLat == nil or telemetry.homeLon == nil) then
     local warningText = "WARNING: HOME NOT SET!"
@@ -415,7 +402,6 @@ function panel.draw(widget)
 
     -- Draw the map scale bar when the viewport is large enough to keep it readable.
   if not panActive and not ultraTiny then
-    if ft then ft.enter(19) end -- calculateScale + scale bar
     local scaleLen, scaleLabel = libs.mapLib.calculateScale(status.mapZoomLevel)
     if scaleLen ~= 0 then
       local scaleFont = verticalMedium and FONT_S or FONT_STD
@@ -432,11 +418,9 @@ function panel.draw(widget)
       lcd.drawLine(12*sx, scaleY_line, 12*sx + scaleLen, scaleY_line)
       lcd.drawText(12*sx, scaleY_label, scaleLabel)
     end
-    if ft then ft.leave(19) end -- calculateScale + scale bar
   end
 
   -- Edge arrows: drawn after all overlays so they are always on top.
-  if ft then ft.enter(22) end -- edge arrows block
   -- Black outline is drawn first (larger), colored fill second (smaller, on top)
   -- so that both colors are always clearly visible.
   local edgeMargin = floor(33 * min(sx, sy))
@@ -461,7 +445,6 @@ function panel.draw(widget)
     libs.drawLib.drawRArrow(eX, eY, edgeArrowR, angle, colors.black)
     libs.drawLib.drawRArrow(eX, eY, edgeArrowR - 5, angle, colors.yellow)
   end
-  if ft then ft.leave(22) end -- edge arrows block
 
 end
 

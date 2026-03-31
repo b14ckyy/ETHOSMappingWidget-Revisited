@@ -155,7 +155,7 @@ local function initDebugLineCount()
 
   -- Trigger rollover immediately once the existing file is already at the limit.
   if utils.debugLineCount >= maxLogLines then
-    pcall(utils.performRollover)
+    utils.performRollover()
   end
 end
 
@@ -197,7 +197,7 @@ function utils.logDebug(category, message, force)
       f:close()
       utils.debugLineCount = (utils.debugLineCount or 0) + #lines
       if utils.debugLineCount >= maxLogLines then
-        pcall(utils.performRollover)
+        utils.performRollover()
       end
     end
   end
@@ -221,7 +221,7 @@ function utils.logDebug(category, message, force)
     writeLines({line})
     lastLogFlush = now
   else
-    tinsert(logBuffer, line)
+    logBuffer[#logBuffer + 1] = line
     if #logBuffer >= maxBufferedLines then
       flushBuffer(true)
     else
@@ -258,7 +258,7 @@ function utils.flushLogs(force)
     f:close()
     utils.debugLineCount = (utils.debugLineCount or 0) + #logBuffer
     if utils.debugLineCount >= maxLogLines then
-      pcall(utils.performRollover)
+      utils.performRollover()
     end
   end
 
