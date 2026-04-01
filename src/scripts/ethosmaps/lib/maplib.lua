@@ -663,14 +663,14 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   end
 
   if dbgThrottle then
-    libs.utils.logDebug("WP_DRAW", fmt("DRAW M%d: %d WPs, wpR=%d, screenX=%.0f", mIdx, #mission, max(floor(20 * min(status.scaleX or 1, status.scaleY or 1)), 10), myScreenX), true)
+    libs.utils.logDebug("WP_DRAW", fmt("DRAW M%d: %d WPs, wpR=%d, screenX=%.0f", mIdx, #mission, max(floor(20 * (0.5 + min(status.scaleX or 1, status.scaleY or 1) * 0.5)), 10), myScreenX), true)
   end
 
   ensureWpColors()
 
   local scaleX = status.scaleX or 1
   local scaleY = status.scaleY or 1
-  local wpR = max(floor(20 * min(scaleX, scaleY)), 10)  -- 40px diameter
+  local wpR = max(floor(20 * (0.5 + min(scaleX, scaleY) * 0.5)), 10)  -- dampened scaling
 
   local clipLine = libs.drawLib.clipLine
   local computeOutCode = libs.drawLib.computeOutCode
@@ -937,7 +937,7 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     end
 
     -- Marker pass: circles, numbers, annotations (normal mode only)
-    lcd.font(FONT_STD)
+    lcd.font(w < (status.tinyWidthThreshold or 350) and FONT_XS or FONT_STD)
     local navNum = 0
     local curActiveWp = status.mspActiveWp or 0
     local lastNavIdx = nil
@@ -1196,13 +1196,37 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   status.mapViewTilesY = tiles_y
   status.mapViewHeading = heading
 
+  -- When switching homescreens the viewport size can change between wakeup
+  -- (which built the tile grid for the OLD size) and this paint frame.
+  -- The tile grid is indexed for the old TILES_X/Y so drawing would produce
+  -- shuffled tiles.  Clear the grid and skip this frame; the next wakeup's
+  -- updateTileGrid will bootstrap a fresh grid for the new dimensions.
+  if widget then
+    local prevW = widget.lastW or 0
+    local prevH = widget.lastH or 0
+    if prevW > 0 and prevH > 0 and (prevW ~= w or prevH ~= h) then
+      libs.resetLib.clearTable(tiles)
+      libs.resetLib.clearTable(tiles_path_to_idx)
+      _lastCenterTileX = nil
+      wpScreenCache.valid = false
+      mapNeedsHeavyUpdate = true
+      widget.drawOffsetX = 0
+      widget.drawOffsetY = 0
+      if perfActive and perfStartMs then
+        status.perfProfileAddMs("paint_total_ms", os_clock() * 1000 - perfStartMs)
+      end
+      lcd.setClipping()
+      return
+    end
+  end
+
   local telemetry = status.telemetry
   local scaleX = status.scaleX
   local scaleY = status.scaleY
   local debugEnabled = status.debugEnabled
   local colors = status.colors
 
-  local vehicleR = floor(34 * min(scaleX, scaleY))
+  local vehicleR = floor(34 * (0.5 + min(scaleX, scaleY) * 0.5))
 
   -- Pan state: use the snapshot captured at the START of wakeup (before the
   -- timeout check could transition DRAGGING→GRACE).  This guarantees that

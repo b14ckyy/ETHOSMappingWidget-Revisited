@@ -275,7 +275,7 @@ function panel.draw(widget)
     if not panActive then
     libs.drawLib.drawTopBar(widget, 0, topH)
 
-    lcd.font(verticalMedium and FONT_STD or FONT_L)
+    lcd.font(verticalTiny and FONT_XS or verticalMedium and FONT_STD or FONT_L)
 
     local overlayPadX = max(6, floor(8 * sx))
     local overlayPadY = max(3, floor(4 * sy))
