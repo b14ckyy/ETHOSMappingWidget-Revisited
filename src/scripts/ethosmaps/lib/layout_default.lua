@@ -423,8 +423,9 @@ function panel.draw(widget)
   -- Edge arrows: drawn after all overlays so they are always on top.
   -- Black outline is drawn first (larger), colored fill second (smaller, on top)
   -- so that both colors are always clearly visible.
-  local edgeMargin = floor(33 * min(sx, sy))
-  local edgeArrowR = floor(30 * min(sx, sy))
+  local edgeDamp = 0.5 + min(sx, sy) * 0.5
+  local edgeMargin = floor(33 * edgeDamp)
+  local edgeArrowR = floor(30 * edgeDamp)
   local vcx = floor(w / 2)
   local vcy = mapY + floor(mapH / 2)
 
@@ -434,7 +435,7 @@ function panel.draw(widget)
     local eY = max(mapY + edgeMargin, min(status.uavEdgeDrawY, mapY + mapH - edgeMargin))
     local angle = _deg(_atan2(status.uavEdgeDrawX - vcx, -(status.uavEdgeDrawY - vcy)))
     libs.drawLib.drawRArrow(eX, eY, edgeArrowR, angle, colors.black)
-    libs.drawLib.drawRArrow(eX, eY, edgeArrowR - 5, angle, colors.red)
+    libs.drawLib.drawRArrow(eX, eY, edgeArrowR - floor(5 * edgeDamp), angle, colors.red)
   end
 
   -- Home out-of-view edge arrow (black outline + yellow fill)
@@ -443,7 +444,7 @@ function panel.draw(widget)
     local eY = max(mapY + edgeMargin, min(status.homeEdgeDrawY, mapY + mapH - edgeMargin))
     local angle = _deg(_atan2(status.homeEdgeDrawX - vcx, -(status.homeEdgeDrawY - vcy)))
     libs.drawLib.drawRArrow(eX, eY, edgeArrowR, angle, colors.black)
-    libs.drawLib.drawRArrow(eX, eY, edgeArrowR - 5, angle, colors.yellow)
+    libs.drawLib.drawRArrow(eX, eY, edgeArrowR - floor(5 * edgeDamp), angle, colors.yellow)
   end
 
 end

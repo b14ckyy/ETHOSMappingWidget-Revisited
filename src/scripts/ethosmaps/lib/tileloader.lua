@@ -406,6 +406,16 @@ function tileLoader.trimCache(centerTileX, centerTileY, level, tilesX, tilesY, l
     end
   end
 
+  -- Protect tiles belonging to OTHER widget instances' viewports so
+  -- multi-instance configurations don't evict each other's visible tiles.
+  local getProtected = libs.mapLib.getProtectedTilePaths
+  if getProtected then
+    local protected = getProtected()
+    for path in pairs(protected) do
+      keep[path] = true
+    end
+  end
+
   local removed = 0
   for path in pairs(mapBitmapByPath) do
     if not keep[path] then

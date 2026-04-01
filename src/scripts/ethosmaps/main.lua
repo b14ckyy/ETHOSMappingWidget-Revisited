@@ -821,8 +821,14 @@ end
 
 local function paint(widget)
   local ok, err = pcall(paintInner, widget)
-  if not ok and mapStatus.debugEnabled and mapLibs and mapLibs.utils then
-    mapLibs.utils.logDebug("PAINT", "pcall ERROR: " .. tostring(err), true)
+  if not ok then
+    -- Release per-instance viewport context if drawMap threw mid-execution.
+    if mapLibs and mapLibs.mapLib and mapLibs.mapLib.deactivateVpCtx then
+      mapLibs.mapLib.deactivateVpCtx()
+    end
+    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+      mapLibs.utils.logDebug("PAINT", "pcall ERROR: " .. tostring(err), true)
+    end
   end
 end
 
