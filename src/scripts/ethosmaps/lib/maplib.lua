@@ -1234,12 +1234,12 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   local renderOffsetY = widget.drawOffsetY or 0
 
   -- During panning, recompute drawOffset using the CURRENT panOffset instead
-  -- of the stale value from wakeup.  SLIDE events accumulate between wakeup
-  -- (~10 Hz) and paint (up to 60 fps); without this the map freezes for
-  -- several paint frames then jumps when the next wakeup updates drawOffset.
+  -- of the stale value from wakeup.  SLIDE events update panOffset between
+  -- wakeup and paint; without this the map position lags one frame behind
+  -- the finger, causing visible stutter at ~3-4 fps.
   -- The recomputation is lightweight (~20 instructions): derive the virtual
   -- center from panAnchor - panOffset, look up its grid column via
-  -- getScreenCoordinates, and recompute the render offset.
+  -- getScreenCoordinates, and recompute the render offset + overlay anchor.
   if isPanning then
     local anchorPX = status.panAnchorPixelX
     local anchorPY = status.panAnchorPixelY
@@ -1257,6 +1257,12 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
       if vcSY ~= -10 then
         renderOffsetX = x + (w / 2) - vcSX
         renderOffsetY = y + (h / 2) - vcSY
+        -- Recompute overlay anchor from the paint-time VC so Home/UAV/marker
+        -- positions use the same computational epoch as the tile renderOffset.
+        if tile_x ~= nil then
+          myScreenX = vcSX + (tile_x - vcTX) * TILES_SIZE + (offset_x - vcOX)
+          myScreenY = vcSY + (tile_y - vcTY) * TILES_SIZE + (offset_y - vcOY)
+        end
       end
     end
   end
