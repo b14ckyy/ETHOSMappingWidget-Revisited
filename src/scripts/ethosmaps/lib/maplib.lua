@@ -1123,12 +1123,11 @@ function mapLib.updateTileGrid(widget)
         status.lastPanOffsetX = panOffX
         status.lastPanOffsetY = panOffY
         mapNeedsHeavyUpdate = true
-        -- During active pan, keep the grid centered on vcTile (lead=0,0)
-        -- to prevent grid center oscillation when the finger changes
-        -- direction.  Prefetch still runs in the drag direction so tiles
-        -- ahead are preloaded.  Without this, circular finger movements
-        -- cause the grid center to flip each frame, triggering cache
-        -- eviction/reload cycles that produce visible tile "jerks".
+        -- Keep grid centered on vcTile (lead=0,0) to prevent grid center
+        -- oscillation when the finger changes direction.  gateLeadByTileOffset
+        -- suppresses lead near tile boundaries, causing lead to flip between
+        -- 0 and 1 — which shifts the entire grid by one tile.  Prefetch still
+        -- runs in the drag direction so tiles ahead are preloaded.
         mapLib.loadAndCenterTiles(vcTileX, vcTileY, vcOffsetX, vcOffsetY, TILES_X, level, 0, 0, panPrefetchX, panPrefetchY, 2, true)
       else
         status._stickyPanLeadX = nil
@@ -1139,8 +1138,10 @@ function mapLib.updateTileGrid(widget)
       local vcScreenX, vcScreenY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, vcTileX, vcTileY, vcOffsetX, vcOffsetY, level)
       local centerX = x + (w / 2)
       local centerY = y + (h / 2)
-      widget.drawOffsetX = centerX - vcScreenX
-      widget.drawOffsetY = centerY - vcScreenY
+      local newDrawOffX = centerX - vcScreenX
+      local newDrawOffY = centerY - vcScreenY
+      widget.drawOffsetX = newDrawOffX
+      widget.drawOffsetY = newDrawOffY
       myScreenX = vcScreenX + (tile_x - vcTileX) * TILES_SIZE + (offset_x - vcOffsetX)
       myScreenY = vcScreenY + (tile_y - vcTileY) * TILES_SIZE + (offset_y - vcOffsetY)
     else
@@ -1231,6 +1232,34 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   local maxY = min(minY + h, minY + TILES_Y * TILES_SIZE)
   local renderOffsetX = widget.drawOffsetX or 0
   local renderOffsetY = widget.drawOffsetY or 0
+
+  -- During panning, recompute drawOffset using the CURRENT panOffset instead
+  -- of the stale value from wakeup.  SLIDE events accumulate between wakeup
+  -- (~10 Hz) and paint (up to 60 fps); without this the map freezes for
+  -- several paint frames then jumps when the next wakeup updates drawOffset.
+  -- The recomputation is lightweight (~20 instructions): derive the virtual
+  -- center from panAnchor - panOffset, look up its grid column via
+  -- getScreenCoordinates, and recompute the render offset.
+  if isPanning then
+    local anchorPX = status.panAnchorPixelX
+    local anchorPY = status.panAnchorPixelY
+    if anchorPX and anchorPY then
+      local curPanX = status.panOffsetX or 0
+      local curPanY = status.panOffsetY or 0
+      local vcPxX = anchorPX - curPanX
+      local vcPxY = anchorPY - curPanY
+      local vcTX = floor(vcPxX / TILES_SIZE)
+      local vcTY = floor(vcPxY / TILES_SIZE)
+      local vcOX = vcPxX % TILES_SIZE
+      local vcOY = vcPxY % TILES_SIZE
+      local vcSX, vcSY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, vcTX, vcTY, vcOX, vcOY, level)
+      -- Only apply when vcTile is still in the grid (not the fallback).
+      if vcSY ~= -10 then
+        renderOffsetX = x + (w / 2) - vcSX
+        renderOffsetY = y + (h / 2) - vcSY
+      end
+    end
+  end
 
   -- Clamp render offset so the drawn tile grid always fully covers the viewport.
   -- Skip clamping when pan offset is active — panning can exceed the tile grid.

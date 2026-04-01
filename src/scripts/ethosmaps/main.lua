@@ -814,6 +814,99 @@ local function paint(widget)
   paintInner(widget)
 end
 
+-- ── File-based runtime state persistence ─────────────────────────────────
+-- Runtime state that changes during normal operation (zoom level, observation
+-- marker, default position) is stored in a plain-text file on the SD card
+-- instead of ETHOS widget storage.  This avoids the limited widget storage
+-- buffer (see ETHOS issue #5462) and eliminates the risk of corrupting the
+-- configure()-managed settings when out-of-band storage.write() calls shift
+-- the positional slot counter.
+local STATE_FILE_PATH = "/scripts/ethosmaps/state.dat"
+
+local function writeStateFile()
+  -- Persists volatile runtime state to a file so it survives radio restarts.
+  -- Merge strategy: read existing file first, then only overwrite keys that
+  -- have a non-nil in-memory value.  This prevents write() calls (e.g. from
+  -- ETHOS settings dismiss or page-switch) from clobbering state.dat with
+  -- nil values when the in-memory state hasn't been fully restored yet.
+  local ok, err = pcall(function()
+    -- Read existing state first (merge base)
+    local existing = {}
+    local rf = io.open(STATE_FILE_PATH, "r")
+    if rf then
+      local line = rf:read("*line")
+      while line do
+        local k, v = line:match("^([^=]+)=(.*)$")
+        if k and v ~= "nil" then
+          existing[k] = v
+        end
+        line = rf:read("*line")
+      end
+      rf:close()
+    end
+
+    -- Merge: in-memory value wins when non-nil, otherwise keep existing
+    local function merged(key, memVal)
+      if memVal ~= nil then return tostring(memVal) end
+      return existing[key]  -- may be nil → written as "nil"
+    end
+
+    local f = io.open(STATE_FILE_PATH, "w")
+    if not f then
+      if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+        mapLibs.utils.logDebug("STATE", "writeStateFile: io.open(w) FAILED for " .. STATE_FILE_PATH, true)
+      end
+      return
+    end
+    local function w(key, val)
+      if val == nil then
+        f:write(key .. "=nil\n")
+      else
+        f:write(key .. "=" .. tostring(val) .. "\n")
+      end
+    end
+    w("version", WIDGET_VERSION)
+    w("mapZoomLevel", mapStatus.mapZoomLevel)
+    w("observationLat", merged("observationLat", mapStatus.observationLat))
+    w("observationLon", merged("observationLon", mapStatus.observationLon))
+    w("defaultLat", merged("defaultLat", mapStatus.conf.defaultLat))
+    w("defaultLon", merged("defaultLon", mapStatus.conf.defaultLon))
+    f:close()
+  end)
+  if not ok and err then
+    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+      mapLibs.utils.logDebug("STATE", "writeStateFile pcall ERROR: " .. tostring(err), true)
+    end
+  end
+end
+
+local function readStateFile()
+  -- Restores volatile runtime state from the file.  Returns a table of
+  -- key→string pairs, or nil if the file does not exist or cannot be read.
+  local ok, result = pcall(function()
+    local f = io.open(STATE_FILE_PATH, "r")
+    if not f then
+      if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+        mapLibs.utils.logDebug("STATE", "readStateFile: io.open FAILED (file missing?)", true)
+      end
+      return nil
+    end
+    local data = {}
+    local line = f:read("*line")
+    while line do
+      local k, v = line:match("^([^=]+)=(.*)$")
+      if k and v ~= "nil" then
+        data[k] = v
+      end
+      line = f:read("*line")
+    end
+    f:close()
+    return data
+  end)
+  if ok then return result end
+  return nil
+end
+
 local function event(widget, category, value, x, y)
   -- Handles touch input: zoom buttons and drag-to-pan state machine.
   local perfActive = mapStatus.perfActive
@@ -904,6 +997,13 @@ local function event(widget, category, value, x, y)
     local pinTop  = pinBtnY - touchPadding
     local hitPin  = mapStatus.panDragEnabled and not mapStatus.followLock
       and mapLibs.drawLib.isInside(x, y, pinLeft, pinTop, pinLeft + touchSize, pinTop + touchSize)
+
+    -- Resolve overlap: pin and lock hit areas can overlap vertically.
+    -- When both match, prefer pin (it is only visible when unlocked, so
+    -- the user's intent is almost certainly the pin button).
+    if hitPin and hitLock then
+      hitLock = false
+    end
 
     -- Drag zone: full width minus the left button column.
     -- Right edge reserved for future follow button (same width as zoom column).
@@ -1054,6 +1154,11 @@ local function event(widget, category, value, x, y)
             local lat, lon = mapLibs.mapLib.pixel_to_coord(vcPixelX, vcPixelY, mapStatus.mapZoomLevel)
             mapStatus.observationLat = lat
             mapStatus.observationLon = lon
+          else
+            if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+              mapLibs.utils.logDebug("TOUCH", fmt("PIN SET FAILED: anchorX=%s anchorY=%s pixel_to_coord=%s",
+                tostring(anchorX), tostring(anchorY), tostring(mapLibs.mapLib.pixel_to_coord ~= nil)), true)
+            end
           end
         end
         -- Persist immediately
@@ -1257,6 +1362,15 @@ local function setDefaultPosition(widget)
     mapStatus.conf.defaultLat = lat
     mapStatus.conf.defaultLon = lon
     writeStateFile()
+    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+      mapLibs.utils.logDebug("STATE", fmt("setDefaultPosition: lat=%.6f lon=%.6f", lat, lon), true)
+    end
+  else
+    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+      mapLibs.utils.logDebug("STATE", fmt("setDefaultPosition FAILED: followLock=%s anchorX=%s telLat=%s",
+        tostring(mapStatus.followLock), tostring(mapStatus.panAnchorPixelX),
+        tostring(mapStatus.telemetry.lat)), true)
+    end
   end
 end
 
@@ -1464,13 +1578,18 @@ local function wakeupInner(widget)
   if mapLibs and mapLibs.msp then
     local mspState = mapLibs.msp.getState()
 
-    -- Periodic MSP status log (throttled to once per second)
+    -- MSP status log — only on state change
     if mapStatus.debugEnabled and mapLibs.utils then
-      local now = getTime()
-      if not mapStatus._mspLastStatusLog or (now - mapStatus._mspLastStatusLog) > 100 then
-        mapStatus._mspLastStatusLog = now
+      local curMspSig = fmt("%d|%s|%s|%d|%s",
+          mspState.state,
+          tostring(mspState.fcVariant),
+          mspState.fcVersion or "?",
+          mspState.wpCount or 0,
+          tostring(mspState.isArmed))
+      if curMspSig ~= mapStatus._mspLastSig then
+        mapStatus._mspLastSig = curMspSig
         local stateNames = mspStateNames
-        mapLibs.utils.logDebug("MSP_DBG", fmt("state=%s fc=%s(%s) transport=%s wpCount=%d done=%s active=%s missions=%d published=%s",
+        mapLibs.utils.logDebug("MSP_DBG", fmt("state=%s fc=%s(%s) transport=%s wpCount=%d done=%s active=%s missions=%d published=%s armed=%s",
             stateNames[mspState.state] or tostring(mspState.state),
             tostring(mspState.fcVariant),
             mspState.fcVersion or "?",
@@ -1479,7 +1598,8 @@ local function wakeupInner(widget)
             tostring(mapLibs.msp.isDone()),
             tostring(mapLibs.msp.isActive()),
             mspState.missions and #mspState.missions or 0,
-            tostring(mapStatus.mspDownloadDone)), true)
+            tostring(mapStatus.mspDownloadDone),
+            tostring(mspState.isArmed)), true)
       end
     end
 
@@ -1800,62 +1920,6 @@ local function configToStorage(value, lookup)
     if lookup[i] == value then return i end
   end
   return 1
-end
-
--- ── File-based runtime state persistence ─────────────────────────────────
--- Runtime state that changes during normal operation (zoom level, observation
--- marker, default position) is stored in a plain-text file on the SD card
--- instead of ETHOS widget storage.  This avoids the limited widget storage
--- buffer (see ETHOS issue #5462) and eliminates the risk of corrupting the
--- configure()-managed settings when out-of-band storage.write() calls shift
--- the positional slot counter.
-local STATE_FILE_PATH = "/scripts/ethosmaps/state.dat"
-
-local function writeStateFile()
-  -- Persists volatile runtime state to a file so it survives radio restarts.
-  local ok, err = pcall(function()
-    local f = io.open(STATE_FILE_PATH, "w")
-    if not f then return end
-    -- Simple key=value format, one per line.  Use "nil" sentinel for absent values.
-    local function w(key, val)
-      if val == nil then
-        f:write(key .. "=nil\n")
-      else
-        f:write(key .. "=" .. tostring(val) .. "\n")
-      end
-    end
-    w("version", WIDGET_VERSION)
-    w("mapZoomLevel", mapStatus.mapZoomLevel)
-    w("observationLat", mapStatus.observationLat)
-    w("observationLon", mapStatus.observationLon)
-    w("defaultLat", mapStatus.conf.defaultLat)
-    w("defaultLon", mapStatus.conf.defaultLon)
-    f:close()
-  end)
-end
-
-local function readStateFile()
-  -- Restores volatile runtime state from the file.  Returns a table of
-  -- key→string pairs, or nil if the file does not exist or cannot be read.
-  local ok, result = pcall(function()
-    local f = io.open(STATE_FILE_PATH, "r")
-    if not f then return nil end
-    local data = {}
-    for line in f:lines() do
-      local k, v = line:match("^([^=]+)=(.*)$")
-      if k then
-        if v == "nil" then
-          data[k] = nil
-        else
-          data[k] = v
-        end
-      end
-    end
-    f:close()
-    return data
-  end)
-  if ok then return result end
-  return nil
 end
 
 local MAP_PROVIDER_LABELS = {

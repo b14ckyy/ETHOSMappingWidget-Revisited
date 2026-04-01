@@ -966,16 +966,33 @@ function msp.poll()
         if #transportCandidates > 0 and (now - errorTime) >= RETRY_DELAY then
             log("MSP", "Auto-retry after error...")
             local savedArmingOnly = armingOnly
+            local savedFcVariant  = fcVariant
+            local savedFcMajor    = fcVersionMajor
+            local savedFcMinor    = fcVersionMinor
+            local savedFcPatch    = fcVersionPatch
             local savedCandidates = transportCandidates
             resetState()
             armingOnly          = savedArmingOnly
             transportCandidates = savedCandidates
             transportIdx        = 1
             activateTransport()
-            state     = STATE_CONNECTING
-            startTime = now
-            log("MSP", fmt("Trying transport %d/%d: %s",
-                transportIdx, #transportCandidates, transportCandidates[transportIdx].name))
+
+            -- If FC was already identified and we only need arming state,
+            -- skip re-identification and go straight to DONE.
+            if savedFcVariant == "INAV" and savedArmingOnly then
+                fcVariant      = savedFcVariant
+                fcVersionMajor = savedFcMajor
+                fcVersionMinor = savedFcMinor
+                fcVersionPatch = savedFcPatch
+                connected      = true
+                state          = STATE_DONE
+                log("MSP", "FC already known — resuming arming poll")
+            else
+                state     = STATE_CONNECTING
+                startTime = now
+                log("MSP", fmt("Trying transport %d/%d: %s",
+                    transportIdx, #transportCandidates, transportCandidates[transportIdx].name))
+            end
         end
         return
     end
