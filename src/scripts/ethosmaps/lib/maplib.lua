@@ -553,11 +553,21 @@ local function drawWpMarker(wp, sx, sy, wpNum, r, dense, isActive)
   local action = wp.action
 
   if action == WP_ACT_SET_POI then
-    -- Red bullseye: outer ring, inner ring, center dot
-    lcd.color(wpColorPoi)
-    lcd.drawCircle(sx, sy, r)
-    lcd.drawCircle(sx, sy, max(floor(r * 0.55), 2))
-    lcd.drawFilledRectangle(sx - 1, sy - 1, 3, 3)
+    if dense then
+      -- Dense mode: small yellow filled dot
+      lcd.color(wpColorJump)
+      lcd.drawFilledRectangle(sx - 2, sy - 2, 5, 5)
+    else
+      -- WP-style marker with yellow ring and "POI" label
+      lcd.color(wpColorShadow)
+      lcd.drawFilledCircle(sx, sy, r - 2)
+      lcd.color(wpColorJump)
+      lcd.drawCircle(sx, sy, r - 2)
+      lcd.drawCircle(sx, sy, r - 3)
+      lcd.font(FONT_XS)
+      local tw, th = lcd.getTextSize("POI")
+      lcd.drawText(sx - floor(tw / 2), sy - floor(th / 2), "POI")
+    end
     return
   end
 
@@ -771,9 +781,9 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     lcd.pen(SOLID)
     local colorDirty = false
     for i = 1, mLen do
-      if not scrX[i] then goto wp_dense_continue end
-
       local act = mission[i].action
+      if not scrX[i] and wpHasPosition(act) then goto wp_dense_continue end
+
       if act == 1 or act == 3 or act == 8 then  -- navigable WP
         -- Path line from previous navigable WP
         if scrX[i] and prevNav then
@@ -828,10 +838,8 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
 
       elseif act == 5 then  -- SET_POI
         if not isPanning and scrX[i] and wpOC[i] == 0 then
-          lcd.color(wpColorPoi)
-          lcd.drawCircle(scrX[i], scrY[i], wpR)
-          lcd.drawCircle(scrX[i], scrY[i], max(floor(wpR * 0.55), 2))
-          lcd.drawFilledRectangle(scrX[i] - 1, scrY[i] - 1, 3, 3)
+          lcd.color(wpColorJump)
+          lcd.drawFilledRectangle(scrX[i] - 2, scrY[i] - 2, 5, 5)
           colorDirty = true
         end
 
@@ -862,9 +870,9 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     lcd.color(wpColorPath)
     lcd.pen(SOLID)
     for i = 1, mLen do
-      if not scrX[i] then goto wp_normal_continue end
-
       local act = mission[i].action
+      if not scrX[i] and wpHasPosition(act) then goto wp_normal_continue end
+
       local isNav = act == 1 or act == 3 or act == 8
 
       -- Path lines between consecutive navigable WPs

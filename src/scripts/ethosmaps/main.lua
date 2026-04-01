@@ -549,6 +549,15 @@ end
 local function createOnce(widget)
   -- Marks a widget instance as ready for background processing after the first valid lifecycle callback.
   widget.runBgTasks = true
+
+  -- Start MSP here (not in create()) because ETHOS calls create() BEFORE read().
+  -- In create(), mapStatus.conf.wpDownload is still at its default (false), so
+  -- msp.open() would incorrectly start in armingOnly mode.  By the time wakeup()
+  -- fires createOnce(), read() has already loaded the persisted settings.
+  if mapLibs and mapLibs.msp then
+    local armOnly = not mapStatus.conf.wpDownload
+    mapLibs.msp.open({ armingOnly = armOnly })
+  end
 end
 
 local function reset(widget)
@@ -1840,11 +1849,8 @@ local function create()
   -- Emit a visible session marker once so each debug log session has a clear start record.
   logDebugSessionStart("widget create")
 
-  -- Start MSP waypoint download if SmartPort transport is available
-  if mapLibs.msp then
-    local armOnly = not mapStatus.conf.wpDownload
-    mapLibs.msp.open({ armingOnly = armOnly })
-  end
+  -- NOTE: msp.open() is deferred to createOnce() (first wakeup) because ETHOS
+  -- calls create() before read(), so conf.wpDownload is still at its default here.
 
   return {
     conf = mapStatus.conf,
