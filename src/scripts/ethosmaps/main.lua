@@ -28,7 +28,7 @@ local tinsert, tremove, tconcat = table.insert, table.remove, table.concat
 local os_clock, os_time = os.clock, os.time
 
 -- Widget version string shown in the settings UI.  Bump on every release.
-local WIDGET_VERSION = "2.1-dev1"
+local WIDGET_VERSION = "2.1.0"
 
 -- Storage schema version.  Only bump this when storage keys are renamed,
 -- reordered, or changed in a way that makes old stored values unreadable.
