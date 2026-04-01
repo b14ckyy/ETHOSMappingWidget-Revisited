@@ -147,7 +147,7 @@ local mapStatus = {
     uavSymbol = 1, -- 1 = Arrow, 2 = Airplane, 3 = Multirotor
     zoomControl = 0,  -- 0 = OFF (touch buttons), 1 = 3-POS switch, 2 = Proportional
     zoomChannel = 0,  -- RC channel number (1-64) for zoom input
-    wpDownload = true,  -- Enable/disable INAV waypoint download and display
+    wpDownload = false,  -- Enable/disable INAV waypoint download and display
     -- Layout selection persisted for future layout variants.
     layout = 1,
   },
@@ -1484,8 +1484,10 @@ local function wakeupInner(widget)
     end
 
     -- Publish mission data: progressively during download, final on completion
+    -- Gate: only publish WP data when wpDownload is enabled
+    local wpEnabled = mapStatus.conf.wpDownload
 
-    if mapLibs.msp.isDone() then
+    if wpEnabled and mapLibs.msp.isDone() then
       -- Final publish with parsed missions (split at multi-mission boundaries)
       if not mapStatus.mspDownloadDone then
         if mapStatus.debugEnabled and mapLibs.utils then
@@ -1500,7 +1502,7 @@ local function wakeupInner(widget)
         end
         mapStatus.mspDownloadDone = true
       end
-    elseif mspState.state == mapLibs.msp.STATE_DOWNLOADING and mspState.wpList and #mspState.wpList > 0 then
+    elseif wpEnabled and mspState.state == mapLibs.msp.STATE_DOWNLOADING and mspState.wpList and #mspState.wpList > 0 then
       -- Progressive publish: show WPs as they arrive (only when count changes)
       local newCount = #mspState.wpList
       if newCount ~= (mapStatus._mspLastWpCount or 0) then
@@ -2554,7 +2556,24 @@ local function configure(widget)
   line = form.addLine("Waypoint download (INAV)")
   form.addBooleanField(line, nil,
     function() return mapStatus.conf.wpDownload == true end,
-    function(value) mapStatus.conf.wpDownload = value == true end
+    function(value)
+      local newVal = value == true
+      if newVal == mapStatus.conf.wpDownload then return end
+      mapStatus.conf.wpDownload = newVal
+      -- Restart MSP with the new mode and clear/allow WP data accordingly
+      if mapLibs and mapLibs.msp then
+        mapLibs.msp.close()
+        mapLibs.msp.open({ armingOnly = not newVal })
+      end
+      if not newVal then
+        -- Clear all waypoint data from the map immediately
+        mapStatus.mspMissions = {}
+        mapStatus.mspMissionIdx = 1
+        mapStatus.mspDownloadDone = false
+        mapStatus._mspLastWpCount = 0
+        markMapDirty()
+      end
+    end
   )
 
   line = form.addLine("Zoom control")
