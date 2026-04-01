@@ -19,6 +19,22 @@ Common problems and their solutions. If your issue is not listed here, check the
 
 ---
 
+## UAV Symbol or GPS Coordinates Turn Red
+
+**The UAV marker and/or the GPS coordinate overlay turn red during flight.**
+
+This indicates **GPS telemetry loss** — the widget has not received a new GPS position for 5 seconds. The red color is a visual alert, not an error.
+
+| Cause | Solution |
+|-------|----------|
+| Telemetry link temporarily dropped | Check that receiver is powered and telemetry is active |
+| GPS module lost satellite fix | Ensure GPS module has clear sky view; wait for re-acquisition |
+| Out of range | Reduce distance or check antenna orientation |
+
+The indicators return to normal automatically when GPS telemetry resumes.
+
+---
+
 ## Map Shows Gray Tiles / "NO MAP DATA" Placeholder
 
 **The `nomap.png` placeholder image is shown instead of satellite imagery.**

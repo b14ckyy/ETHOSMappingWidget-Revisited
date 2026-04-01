@@ -45,12 +45,12 @@ The current zoom level is shown in the top-left corner of the map.
 
 ### Map Elements
 
-- **UAV icon** — shows the vehicle's current position and heading. Three symbol styles are available: Arrow, Airplane, and Multirotor (configurable in settings).
+- **UAV icon** — shows the vehicle's current position and heading. Three symbol styles are available: Arrow, Airplane, and Multirotor (configurable in settings). The UAV symbol turns **red** when GPS telemetry is lost (no position update for 5 seconds).
 - **Home marker** — shows the home position (set automatically on arming or manually via menu).
 - **Home direction indicator** — an arrow at the edge of the map pointing toward home when home is off-screen.
 - **Trail** — a yellow line tracing the flight path. Trail resolution and bend sensitivity are configurable.
 - **Scale bar** — bottom-left corner, shows the current map scale.
-- **GPS coordinates** — displayed on screen in decimal or DMS format (configurable).
+- **GPS coordinates** — displayed on screen in decimal or DMS format (configurable). The overlay turns **red** when GPS telemetry is lost.
 - **Observation marker** — a user-placed pin for marking a point of interest on the map.
 - **Waypoint overlay** — INAV mission waypoints and flight path, if waypoint download is enabled (see [Waypoint Mission](WaypointMission.md)).
 
@@ -111,7 +111,7 @@ Open the widget settings through **System → Widgets → ETHOS Mapping Widget**
 |-------------------|--------------------------------------------------|-------------|
 | Map provider      | Tile provider (Google, ESRI, OSM)                | Google      |
 | Map type          | Map type for the selected provider               | Satellite   |
-| Map zoom          | Default zoom level on startup                    | 18          |
+| Map zoom          | Default zoom level on startup                    | 19          |
 | Map zoom max      | Maximum allowed zoom level                       | 20          |
 | Map zoom min      | Minimum allowed zoom level                       | 1           |
 

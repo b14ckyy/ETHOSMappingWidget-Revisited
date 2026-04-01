@@ -1,4 +1,4 @@
-# Migration Guide: 1.x → 2.0
+# Migration Guide: 1.x → 2.0 → 2.1
 
 This guide covers what changed between version 1.x and 2.0 and what you need to do when upgrading.
 
@@ -83,6 +83,36 @@ Features added since 1.0 that are available after upgrading:
 - Default position setting for map initialization
 
 For details on all features, see the [Overview](Overview.md).
+
+---
+
+## 2.0 → 2.1 Changes
+
+### Quick Summary
+
+| Area | Change | Action Required |
+|------|--------|-----------------|
+| Settings | Fully preserved on upgrade | **None** — all settings carry over |
+| New file: `compute.lua` | New library in `lib/` | **None** — included in release ZIP |
+| State file: `state.dat` | Zoom level, observation marker, default position now stored separately | **None** — created automatically |
+| Telemetry-lost indicator | UAV and GPS overlay turn red when signal lost >5s | **None** — automatic |
+| Vehicle symbols | Shadows reworked with semi-transparent fills | **None** — visual improvement |
+
+### No Settings Reset Required
+
+Unlike the 1.x → 2.0 upgrade, **version 2.1 preserves all existing settings**. The internal storage schema has not changed, so no reconfiguration is needed after updating.
+
+### New Runtime State File
+
+Version 2.1 stores volatile runtime state (zoom level, observation marker position, default map center) in a separate file at `scripts/ethosmaps/state.dat` on the SD card. This file is created automatically and survives radio restarts. It replaces the previous approach of storing these values in ETHOS widget storage, which had buffer size limitations.
+
+### New Features in 2.1
+
+- **Telemetry loss detection** — UAV symbol and GPS coordinates turn red when no position update is received for 5 seconds
+- **Improved vehicle shadows** — Arrow and Airplane symbols now have semi-transparent filled shadow backdrops
+- **Smoother map panning** — tiles and overlays (UAV, Home, observation marker) scroll together without jitter
+- **Performance overhaul** — heavy computation moved from rendering to a background scheduler, resulting in stable frame rates even with 60+ waypoints
+- **Smarter MSP connection** — error retries skip redundant FC re-identification when the flight controller is already known
 
 ## Updating
 
