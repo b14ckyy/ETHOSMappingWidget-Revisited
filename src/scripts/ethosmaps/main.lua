@@ -549,6 +549,15 @@ end
 local function createOnce(widget)
   -- Marks a widget instance as ready for background processing after the first valid lifecycle callback.
   widget.runBgTasks = true
+
+  -- Start MSP here (not in create()) because ETHOS calls create() BEFORE read().
+  -- In create(), mapStatus.conf.wpDownload is still at its default (false), so
+  -- msp.open() would incorrectly start in armingOnly mode.  By the time wakeup()
+  -- fires createOnce(), read() has already loaded the persisted settings.
+  if mapLibs and mapLibs.msp then
+    local armOnly = not mapStatus.conf.wpDownload
+    mapLibs.msp.open({ armingOnly = armOnly })
+  end
 end
 
 local function reset(widget)
@@ -812,8 +821,14 @@ end
 
 local function paint(widget)
   local ok, err = pcall(paintInner, widget)
-  if not ok and mapStatus.debugEnabled and mapLibs and mapLibs.utils then
-    mapLibs.utils.logDebug("PAINT", "pcall ERROR: " .. tostring(err), true)
+  if not ok then
+    -- Release per-instance viewport context if drawMap threw mid-execution.
+    if mapLibs and mapLibs.mapLib and mapLibs.mapLib.deactivateVpCtx then
+      mapLibs.mapLib.deactivateVpCtx()
+    end
+    if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+      mapLibs.utils.logDebug("PAINT", "pcall ERROR: " .. tostring(err), true)
+    end
   end
 end
 
@@ -1840,11 +1855,8 @@ local function create()
   -- Emit a visible session marker once so each debug log session has a clear start record.
   logDebugSessionStart("widget create")
 
-  -- Start MSP waypoint download if SmartPort transport is available
-  if mapLibs.msp then
-    local armOnly = not mapStatus.conf.wpDownload
-    mapLibs.msp.open({ armingOnly = armOnly })
-  end
+  -- NOTE: msp.open() is deferred to createOnce() (first wakeup) because ETHOS
+  -- calls create() before read(), so conf.wpDownload is still at its default here.
 
   return {
     conf = mapStatus.conf,

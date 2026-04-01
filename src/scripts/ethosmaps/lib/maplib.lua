@@ -93,6 +93,124 @@ local HEAVY_UPDATE_INTERVAL = 25
 local mapNeedsHeavyUpdate = true
 local RASTER_REBUILD_OFFSET_THRESHOLD = 40
 
+-- ── Per-instance viewport context ──────────────────────────────────────
+-- Each widget instance maintains its own tile grid, screen positions, and
+-- cache state so that multiple instances (or a single instance switching
+-- homescreens) don't fight over the shared module-level locals.
+-- Tables are swapped by reference (zero-copy), scalars by value.
+-- Total cost: ~100 instructions per activate/deactivate cycle.
+
+local activeCtx = nil
+local vpCtxRegistry = {}  -- all created vpCtx objects (weak keys so GC can collect)
+setmetatable(vpCtxRegistry, { __mode = "k" })
+
+local function createVpCtx()
+  local ctx = {
+    tiles    = {},
+    tilesIdx = {},
+    mapX     = 0,   mapY     = 0,
+    tilesX   = 0,   tilesY   = 0,
+    screenX  = nil, screenY  = nil,
+    lastCTX  = nil, lastCTY  = nil, lastCTLevel = nil,
+    lastHeavyT  = 0,
+    needsHeavy  = true,
+    lastZoom     = -99,
+    lastProvider = -99,
+    lastMapType  = nil,
+    wpCache = { valid = false, dense = false, refBaseX = 0, refBaseY = 0, mLen = 0, mIdx = 0, zoom = -1 },
+    wpSX = {},  wpSY = {},  wpOC = {},
+    -- Per-instance viewport params (published by drawMap, read by updateTileGrid)
+    viewX = nil, viewY = nil, viewW = nil, viewH = nil,
+    viewLevel = nil, viewTilesX = nil, viewTilesY = nil, viewHeading = nil,
+  }
+  vpCtxRegistry[ctx] = true
+  return ctx
+end
+
+local function activateVpCtx(widget)
+  if not widget then return end
+  local ctx = widget._vpCtx
+  if not ctx then
+    ctx = createVpCtx()
+    widget._vpCtx = ctx
+  end
+  -- Save previous context's scalars back before switching
+  if activeCtx then
+    activeCtx.mapX = MAP_X;          activeCtx.mapY = MAP_Y
+    activeCtx.tilesX = TILES_X;      activeCtx.tilesY = TILES_Y
+    activeCtx.screenX = myScreenX;   activeCtx.screenY = myScreenY
+    activeCtx.lastCTX = _lastCenterTileX
+    activeCtx.lastCTY = _lastCenterTileY
+    activeCtx.lastCTLevel = _lastCenterLevel
+    activeCtx.lastHeavyT = lastHeavyUpdate
+    activeCtx.needsHeavy = mapNeedsHeavyUpdate
+    activeCtx.lastZoom = lastZoomLevel
+    activeCtx.lastProvider = lastMapProvider
+    activeCtx.lastMapType = lastMapType
+  end
+  -- Swap in: tables by reference, scalars by value
+  tiles              = ctx.tiles
+  tiles_path_to_idx  = ctx.tilesIdx
+  MAP_X              = ctx.mapX
+  MAP_Y              = ctx.mapY
+  TILES_X            = ctx.tilesX
+  TILES_Y            = ctx.tilesY
+  myScreenX          = ctx.screenX
+  myScreenY          = ctx.screenY
+  _lastCenterTileX   = ctx.lastCTX
+  _lastCenterTileY   = ctx.lastCTY
+  _lastCenterLevel   = ctx.lastCTLevel
+  lastHeavyUpdate    = ctx.lastHeavyT
+  mapNeedsHeavyUpdate = ctx.needsHeavy
+  lastZoomLevel      = ctx.lastZoom
+  lastMapProvider    = ctx.lastProvider
+  lastMapType        = ctx.lastMapType
+  wpScreenCache      = ctx.wpCache
+  wpScrX             = ctx.wpSX
+  wpScrY             = ctx.wpSY
+  wpOutCode          = ctx.wpOC
+  activeCtx          = ctx
+end
+
+local function deactivateVpCtx()
+  local ctx = activeCtx
+  if not ctx then return end
+  activeCtx = nil  -- clear FIRST so re-entrant calls (pcall handler) are safe
+  -- Save scalars back (tables are shared references, already in-place)
+  ctx.mapX = MAP_X;          ctx.mapY = MAP_Y
+  ctx.tilesX = TILES_X;      ctx.tilesY = TILES_Y
+  ctx.screenX = myScreenX;   ctx.screenY = myScreenY
+  ctx.lastCTX = _lastCenterTileX
+  ctx.lastCTY = _lastCenterTileY
+  ctx.lastCTLevel = _lastCenterLevel
+  ctx.lastHeavyT = lastHeavyUpdate
+  ctx.needsHeavy = mapNeedsHeavyUpdate
+  ctx.lastZoom = lastZoomLevel
+  ctx.lastProvider = lastMapProvider
+  ctx.lastMapType = lastMapType
+end
+
+-- Exposed for pcall error recovery: if drawMap/updateTileGrid throws,
+-- the caller can release the active context to prevent stale state leaks.
+mapLib.deactivateVpCtx = deactivateVpCtx
+
+--- Returns a set of tile paths from all NON-active viewport contexts.
+--- Used by tileLoader.trimCache to protect other instances' visible tiles
+--- from eviction.
+function mapLib.getProtectedTilePaths()
+  local paths = {}
+  for ctx in pairs(vpCtxRegistry) do
+    if ctx ~= activeCtx then
+      local ctxTiles = ctx.tiles
+      for i = 1, #ctxTiles do
+        local p = ctxTiles[i]
+        if p then paths[p] = true end
+      end
+    end
+  end
+  return paths
+end
+
 local DIRECTIONAL_LEAD_TILES = 1
 local DIRECTIONAL_LEAD_MIN_SPEED = 1.5
 local DIRECTIONAL_LEAD_OFFSET_THRESHOLD = 90
@@ -553,11 +671,21 @@ local function drawWpMarker(wp, sx, sy, wpNum, r, dense, isActive)
   local action = wp.action
 
   if action == WP_ACT_SET_POI then
-    -- Red bullseye: outer ring, inner ring, center dot
-    lcd.color(wpColorPoi)
-    lcd.drawCircle(sx, sy, r)
-    lcd.drawCircle(sx, sy, max(floor(r * 0.55), 2))
-    lcd.drawFilledRectangle(sx - 1, sy - 1, 3, 3)
+    if dense then
+      -- Dense mode: small yellow filled dot
+      lcd.color(wpColorJump)
+      lcd.drawFilledRectangle(sx - 2, sy - 2, 5, 5)
+    else
+      -- WP-style marker with yellow ring and "POI" label
+      lcd.color(wpColorShadow)
+      lcd.drawFilledCircle(sx, sy, r - 2)
+      lcd.color(wpColorJump)
+      lcd.drawCircle(sx, sy, r - 2)
+      lcd.drawCircle(sx, sy, r - 3)
+      lcd.font(FONT_XS)
+      local tw, th = lcd.getTextSize("POI")
+      lcd.drawText(sx - floor(tw / 2), sy - floor(th / 2), "POI")
+    end
     return
   end
 
@@ -653,14 +781,14 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
   end
 
   if dbgThrottle then
-    libs.utils.logDebug("WP_DRAW", fmt("DRAW M%d: %d WPs, wpR=%d, screenX=%.0f", mIdx, #mission, max(floor(20 * min(status.scaleX or 1, status.scaleY or 1)), 10), myScreenX), true)
+    libs.utils.logDebug("WP_DRAW", fmt("DRAW M%d: %d WPs, wpR=%d, screenX=%.0f", mIdx, #mission, max(floor(20 * (0.5 + min(status.scaleX or 1, status.scaleY or 1) * 0.5)), 10), myScreenX), true)
   end
 
   ensureWpColors()
 
   local scaleX = status.scaleX or 1
   local scaleY = status.scaleY or 1
-  local wpR = max(floor(20 * min(scaleX, scaleY)), 10)  -- 40px diameter
+  local wpR = max(floor(20 * (0.5 + min(scaleX, scaleY) * 0.5)), 10)  -- dampened scaling
 
   local clipLine = libs.drawLib.clipLine
   local computeOutCode = libs.drawLib.computeOutCode
@@ -771,9 +899,9 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     lcd.pen(SOLID)
     local colorDirty = false
     for i = 1, mLen do
-      if not scrX[i] then goto wp_dense_continue end
-
       local act = mission[i].action
+      if not scrX[i] and wpHasPosition(act) then goto wp_dense_continue end
+
       if act == 1 or act == 3 or act == 8 then  -- navigable WP
         -- Path line from previous navigable WP
         if scrX[i] and prevNav then
@@ -828,10 +956,8 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
 
       elseif act == 5 then  -- SET_POI
         if not isPanning and scrX[i] and wpOC[i] == 0 then
-          lcd.color(wpColorPoi)
-          lcd.drawCircle(scrX[i], scrY[i], wpR)
-          lcd.drawCircle(scrX[i], scrY[i], max(floor(wpR * 0.55), 2))
-          lcd.drawFilledRectangle(scrX[i] - 1, scrY[i] - 1, 3, 3)
+          lcd.color(wpColorJump)
+          lcd.drawFilledRectangle(scrX[i] - 2, scrY[i] - 2, 5, 5)
           colorDirty = true
         end
 
@@ -862,9 +988,9 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     lcd.color(wpColorPath)
     lcd.pen(SOLID)
     for i = 1, mLen do
-      if not scrX[i] then goto wp_normal_continue end
-
       local act = mission[i].action
+      if not scrX[i] and wpHasPosition(act) then goto wp_normal_continue end
+
       local isNav = act == 1 or act == 3 or act == 8
 
       -- Path lines between consecutive navigable WPs
@@ -929,7 +1055,7 @@ local function drawWaypoints(x, y, w, h, level, uav_tile_x, uav_tile_y, uav_offs
     end
 
     -- Marker pass: circles, numbers, annotations (normal mode only)
-    lcd.font(FONT_STD)
+    lcd.font(w < (status.tinyWidthThreshold or 350) and FONT_XS or FONT_STD)
     local navNum = 0
     local curActiveWp = status.mspActiveWp or 0
     local lastNavIdx = nil
@@ -1017,23 +1143,34 @@ end
 -- ──────────────────────────────────────────────────────────────
 
 function mapLib.updateTileGrid(widget)
-  -- Read viewport params published by the previous paint frame.
-  local x = status.mapViewX
-  local y = status.mapViewY
-  local w = status.mapViewW
-  local h = status.mapViewH
+  -- ── Per-instance viewport context ──
+  activateVpCtx(widget)
+
+  -- Read viewport params from this instance's context (published by its drawMap).
+  -- Fall back to status.mapView* for the very first frame before drawMap has run.
+  local ctx = widget._vpCtx
+  local x = (ctx and ctx.viewX) or status.mapViewX
+  local y = (ctx and ctx.viewY) or status.mapViewY
+  local w = (ctx and ctx.viewW) or status.mapViewW
+  local h = (ctx and ctx.viewH) or status.mapViewH
   -- Use live zoom level so zoom changes take effect immediately in wakeup
   -- instead of waiting one frame for paint to publish the new level.
-  local level = status.mapZoomLevel or status.mapViewLevel
-  local tiles_x = status.mapViewTilesX
-  local tiles_y = status.mapViewTilesY
+  local level = status.mapZoomLevel or (ctx and ctx.viewLevel) or status.mapViewLevel
+  local tiles_x = (ctx and ctx.viewTilesX) or status.mapViewTilesX
+  local tiles_y = (ctx and ctx.viewTilesY) or status.mapViewTilesY
   -- Use live telemetry heading for directional lead (more current than previous frame's snapshot).
   local telemetry = status.telemetry
-  local heading = telemetry and (telemetry.yaw or telemetry.cog) or status.mapViewHeading
+  local heading = telemetry and (telemetry.yaw or telemetry.cog) or (ctx and ctx.viewHeading) or status.mapViewHeading
 
   -- Guard: viewport not yet published (first frame hasn't run).
-  if x == nil or w == nil or level == nil or tiles_x == nil then return end
-  if not telemetry then return end
+  if x == nil or w == nil or level == nil or tiles_x == nil then
+    deactivateVpCtx()
+    return
+  end
+  if not telemetry then
+    deactivateVpCtx()
+    return
+  end
 
   -- Ensure projection helpers and grid constants are configured.
   setupMaps(x, y, w, h, level, tiles_x, tiles_y)
@@ -1166,6 +1303,7 @@ function mapLib.updateTileGrid(widget)
       widget.drawOffsetY = centerY - myScreenY
     end
   end
+  deactivateVpCtx()
 end
 
 function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, allowStateUpdate)
@@ -1176,9 +1314,25 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
     perfStartMs = os_clock() * 1000
   end
   lcd.setClipping(x, y, w, h)
+
+  -- ── Per-instance viewport context ──
+  -- Swap in this instance's tile grid, screen positions, and caches.
+  activateVpCtx(widget)
+  local prevTilesX, prevTilesY = TILES_X, TILES_Y  -- before setupMaps changes them
+
   setupMaps(x, y, w, h, level, tiles_x, tiles_y)
 
-  -- Publish viewport params so compute.lua/wakeup can call updateTileGrid().
+  -- Publish per-instance viewport params so this instance's updateTileGrid
+  -- reads the correct dimensions in the next wakeup cycle.
+  if widget and widget._vpCtx then
+    local ctx = widget._vpCtx
+    ctx.viewX = x;          ctx.viewY = y
+    ctx.viewW = w;          ctx.viewH = h
+    ctx.viewLevel = level
+    ctx.viewTilesX = tiles_x; ctx.viewTilesY = tiles_y
+    ctx.viewHeading = heading
+  end
+  -- Keep status.mapView* for backward compatibility (single-instance callers).
   status.mapViewX = x
   status.mapViewY = y
   status.mapViewW = w
@@ -1188,13 +1342,31 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   status.mapViewTilesY = tiles_y
   status.mapViewHeading = heading
 
+  -- When viewport grid dimensions change (homescreen switch or multi-instance)
+  -- rebuild the tile mapping inline instead of dropping a frame.
+  -- setupMaps already updated TILES_X/Y; if they differ from what this
+  -- context had, the tiles[] indices are stale and must be rebuilt.
+  if (TILES_X ~= prevTilesX or TILES_Y ~= prevTilesY) and prevTilesX > 0 then
+    if tile_x then
+      _lastCenterTileX = nil
+      mapNeedsHeavyUpdate = true
+      mapLib.loadAndCenterTiles(tile_x, tile_y, offset_x, offset_y, TILES_X, level, 0, 0, 0, 0)
+      myScreenX, myScreenY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, tile_x, tile_y, offset_x, offset_y, level)
+      widget.drawOffsetX = x + (w / 2) - myScreenX
+      widget.drawOffsetY = y + (h / 2) - myScreenY
+      wpScreenCache.valid = false
+      widget.lastW = w
+      widget.lastH = h
+    end
+  end
+
   local telemetry = status.telemetry
   local scaleX = status.scaleX
   local scaleY = status.scaleY
   local debugEnabled = status.debugEnabled
   local colors = status.colors
 
-  local vehicleR = floor(34 * min(scaleX, scaleY))
+  local vehicleR = floor(34 * (0.5 + min(scaleX, scaleY) * 0.5))
 
   -- Pan state: use the snapshot captured at the START of wakeup (before the
   -- timeout check could transition DRAGGING→GRACE).  This guarantees that
@@ -1222,6 +1394,7 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
     if perfActive and perfStartMs then
       status.perfProfileAddMs("paint_total_ms", os_clock() * 1000 - perfStartMs)
     end
+    deactivateVpCtx()
     lcd.setClipping()
     return
   end
@@ -1264,6 +1437,21 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
           myScreenY = vcSY + (tile_y - vcTY) * TILES_SIZE + (offset_y - vcOY)
         end
       end
+    end
+  end
+
+  -- Non-panning mode: revalidate renderOffset from paint-time grid state.
+  -- updateTileGrid (wakeup) computed drawOffsetX/Y using its own MAP_X/MAP_Y;
+  -- if the viewport origin shifted between wakeup and paint (e.g. bar height
+  -- change or vpCtx restore), the offset can be stale by a tile or more.
+  -- A single getScreenCoordinates call (~10 instructions) corrects this.
+  if not isPanning and tile_x ~= nil then
+    local freshX, freshY = mapLib.getScreenCoordinates(MAP_X, MAP_Y, tile_x, tile_y, offset_x, offset_y, level)
+    if freshX ~= nil and freshY ~= -10 then
+      renderOffsetX = x + (w / 2) - freshX
+      renderOffsetY = y + (h / 2) - freshY
+      myScreenX = freshX
+      myScreenY = freshY
     end
   end
 
@@ -1416,7 +1604,8 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   end
 
   -- Observation marker: green line from UAV + marker circle
-  if status.observationLat ~= nil and status.observationLon ~= nil and myScreenX ~= nil and uav_tile_x ~= nil then
+  -- Only rendered in fullscreen (panDragEnabled) where touch can set/remove the marker.
+  if status.panDragEnabled and status.observationLat ~= nil and status.observationLon ~= nil and myScreenX ~= nil and uav_tile_x ~= nil then
     local obsRes = libs.compute and libs.compute.getResults().observation
     if obsRes and obsRes.tpx then
       local markerX = myScreenX + obsRes.tpx - uav_tile_x * TILES_SIZE - uav_offset_x + renderOffsetX
@@ -1460,6 +1649,7 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   status.homeEdgeDrawX = homeDrawX
   status.homeEdgeDrawY = homeDrawY
 
+  deactivateVpCtx()
   lcd.setClipping()
 end
 
@@ -1622,8 +1812,14 @@ function mapLib.calculateScale(level)
 end
 
 function mapLib.setNeedsHeavyUpdate()
-  -- Flags the next draw cycle to rebuild the visible tile set instead of relying on throttled reuse.
+  -- Flags the next draw cycle to rebuild the visible tile set instead of
+  -- relying on throttled reuse.  Sets the flag on both the module-level
+  -- local AND all registered vpCtx instances so the flag survives the
+  -- next activateVpCtx swap-in (which overwrites the module-level local).
   mapNeedsHeavyUpdate = true
+  for ctx in pairs(vpCtxRegistry) do
+    ctx.needsHeavy = true
+  end
 end
 
 return mapLib
