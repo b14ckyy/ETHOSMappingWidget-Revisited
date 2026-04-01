@@ -811,7 +811,10 @@ local function paintInner(widget)
 end
 
 local function paint(widget)
-  paintInner(widget)
+  local ok, err = pcall(paintInner, widget)
+  if not ok and mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+    mapLibs.utils.logDebug("PAINT", "pcall ERROR: " .. tostring(err), true)
+  end
 end
 
 -- ── File-based runtime state persistence ─────────────────────────────────
