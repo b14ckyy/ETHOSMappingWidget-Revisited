@@ -7,6 +7,10 @@ Real-time GPS position on satellite or street maps — works on **any** widget s
 
 ![Overview](images/screenshots/overview.png)
 
+## Video Overview
+
+https://www.youtube.com/watch?v=QHtjaexGUEo
+
 ## Download
 
 - **Releases:** https://github.com/b14ckyy/ETHOSMappingWidget-Revisited/releases
