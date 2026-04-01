@@ -4,6 +4,65 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
+## 2.1.0 (2026-04-01)
+
+### Added
+- **GPS telemetry-lost detection**: if lat/lon stop changing for 5 seconds, telemetry is flagged as lost
+- **Telemetry-lost visual indicators**: UAV symbol turns red, GPS coordinate overlay turns red when telemetry lost
+- **Semi-transparent vehicle shadows**: Arrow and Airplane symbols now use `drawFilledTriangle` backdrops instead of hard black outlines (same 40% alpha as Multirotor propellers)
+- **compute.lua scheduler**: offloads WP projection, trail tile-pixel, tile grid math, and observation marker from paint() to wakeup() (Phases 1–5)
+- **Perf profiling system**: per-task ms counters, compute tasks run/skipped, MSP wp/s and error counters
+- **File-based state persistence**: zoom level, observation marker, default position stored in `state.dat` to avoid ETHOS storage buffer overflow (issue #5462)
+- **Decoupled STORAGE_SCHEMA from WIDGET_VERSION**: minor releases no longer require settings reset
+- **Paint-side pan offset recomputation**: tiles and overlays recompute renderOffset from current panOffset at paint time, eliminating pan lag
+- **Paint-side overlay anchor recomputation**: myScreenX/Y recomputed in same paint-time epoch as tiles, eliminating Home/UAV/marker jitter during panning
+
+### Changed
+- **Airplane shadow**: 3-triangle fill matching wing silhouette (nose + left/right wing caps) with blunt wing tips
+- **Arrow shadow**: 2-triangle filled chevron, 2px larger than fill wireframe
+- **GPS/zoom overlay font size**: restored to `FONT_STD` (normal) / `FONT_S` (compact) — fixes regression from dead-code cleanup that shrank overlays
+- Trail accumulation moved from paint() drawMap to `mapLib.updateTrail()` in wakeup()
+- Home and observation marker tile-pixel pre-computed in `computeTileGrid()`
+- Inline outCode closure in `clipLine()` to save ~1500 VM opcodes/frame
+- Bootstrap `updateTileGrid` skips frame instead of running in paint()
+- WP_DENSE_THRESHOLD lowered from 25 to 15 for better viewport culling
+- MSP coordinate sanity check for received waypoints
+- **MSP_DBG logging**: changed from 1-second heartbeat to state-change-only (signature-based)
+- **MSP error retry**: skip FC re-identification when FC already known and armingOnly — resume arming poll directly
+
+### Performance
+- **Removed ftrace system**: all `ft.enter`/`ft.leave` and ftrace.lua deleted (−300 lines)
+- **Removed pcall wrappers**: paint(), wakeup(), utils rollover, logSettingsSnapshot, logDirectoryTree all use direct calls
+- **Embedded Lua optimizations**: cached `lcd.RGB` colors (wpColorShadow, obsMarkerFill), reused sensorNameCache/topBarValueCache in-place, localized `pairs`/`tostring`, moved mspStateNames to module level, reused `_trailSnapshot` table, direct array append in logDebug
+- Viewport culling via Cohen-Sutherland trivial-reject: steady 3.2–3.4 fps with 60 WPs, peak 4.8 fps with 12 WPs cached
+- Vehicle symbol drawing reduces API calls (Arrow: 8→6, Airplane: 16→11)
+- **Skip trail+WP overlays** during active finger drag for maximum pan framerate
+- **Single-pass WP drawing** in dense mode with viewport-only dense detection
+- **Paint-side WP screen coordinate cache**: zero per-WP math on cache hit (~95% of frames)
+
+### Fixed
+- **`hitMission` undefined**: replaced with `status.mspMissions[status.mspMissionIdx]`
+- **`overlayFont` undefined**: was nil causing lcd.font(nil), now correctly computed
+- **`perfActive` missing in `loadAndCenterTiles`**: added guard
+- **RC zoom viewport jump**: scale pan anchor+offset by 2^delta to preserve geographic position across zoom levels
+- **Touch zoom anchor scaling**: correct anchor for GRACE and DETACHED pan states
+- **Zoom-changed tile rebuild**: use mapNeedsHeavyUpdate flag instead of nil tile_x
+- **Pan tile jerk**: use lead=0,0 during active pan; sticky pan lead direction
+- **Menu blinking**: menuOpenedAt guard + menuDismissed callback + 3s safety timeout
+- **wpDownload setting**: toggling OFF immediately clears missions from map; toggling ON triggers fresh MSP open with download
+- **Pin/Lock button overlap**: pin hitbox wins when both active (22px vertical overlap at 800×480)
+- **state.dat io.lines crash**: ETHOS Lua lacks `file:lines()` — replaced with `file:read("*line")` while-loop
+- **writeStateFile forward reference**: relocated before event() (ETHOS silently disables callbacks on forward-declared locals)
+- **state.dat merge-on-write**: reads existing file and only overwrites keys with non-nil in-memory values, preventing nil clobber
+- **paint() pcall wrapper**: absorbs ETHOS 26.1 instruction limit errors — drops frame instead of crashing widget (temporary workaround)
+- Redundant perf assignment in maplib removed
+- Dead `scaleLen`/`scaleLabel` variables removed from layout_default
+- Unused `libs` locals removed from maplib and drawlib
+- Tombstone comments removed from tileloader
+- Removed stale diagnostic logging (LIFECYCLE, verbose STATE, PAN_JUMP, TILE_MISS)
+
+---
+
 ## 2.0-beta1 (2026-03-29)
 
 ### Breaking

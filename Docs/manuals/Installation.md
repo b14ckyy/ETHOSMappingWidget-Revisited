@@ -38,6 +38,7 @@ SD Card (root)
 │       │   ├── err.wav
 │       │   └── inf.wav
 │       └── lib/
+│           ├── compute.lua
 │           ├── drawlib.lua
 │           ├── layout_default.lua
 │           ├── maplib.lua

@@ -18,7 +18,7 @@ PAN_PENDING  = 3   -- Touch detected, waiting for drag movement or release
 ### Timing Constants
 
 ```lua
-PAN_TOUCH_TIMEOUT_CS  = 20   -- 200 ms: no touch events → finger up
+PAN_TOUCH_TIMEOUT_CS  = 50   -- 500 ms: no touch events → finger up
 PAN_GRACE_DURATION_CS = 500  -- 5 s: grace period before auto-recenter
 ```
 

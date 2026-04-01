@@ -683,7 +683,24 @@ local function handleWp(buf)
         p3         = readInt16(buf, 19),
         flags      = buf[21],
     }
+
+    -- Sanity check: discard waypoints with obviously corrupt coordinates.
+    -- Valid lat range: -90..90, valid lon range: -180..180.
+    if wp.lat < -90 or wp.lat > 90 or wp.lon < -180 or wp.lon > 180 then
+      log("MSP", fmt("WP#%d CORRUPT lat=%.7f lon=%.7f — skipped",
+                      wp.idx, wp.lat, wp.lon))
+      -- Keep index in sync but replace with zeroed-out placeholder
+      wp.lat = 0
+      wp.lon = 0
+      wp.action = 0  -- mark as non-navigable so drawWaypoints skips it
+    end
+
     wpList[#wpList + 1] = wp
+
+    -- Perf counter: WP successfully received
+    if status and status.perfProfileInc then
+        status.perfProfileInc("msp_wp_received")
+    end
 
     log("MSP", fmt("WP#%d %s lat=%.7f lon=%.7f alt=%.1fm",
                     wp.idx, wp.actionName, wp.lat, wp.lon, wp.alt))
@@ -949,16 +966,33 @@ function msp.poll()
         if #transportCandidates > 0 and (now - errorTime) >= RETRY_DELAY then
             log("MSP", "Auto-retry after error...")
             local savedArmingOnly = armingOnly
+            local savedFcVariant  = fcVariant
+            local savedFcMajor    = fcVersionMajor
+            local savedFcMinor    = fcVersionMinor
+            local savedFcPatch    = fcVersionPatch
             local savedCandidates = transportCandidates
             resetState()
             armingOnly          = savedArmingOnly
             transportCandidates = savedCandidates
             transportIdx        = 1
             activateTransport()
-            state     = STATE_CONNECTING
-            startTime = now
-            log("MSP", fmt("Trying transport %d/%d: %s",
-                transportIdx, #transportCandidates, transportCandidates[transportIdx].name))
+
+            -- If FC was already identified and we only need arming state,
+            -- skip re-identification and go straight to DONE.
+            if savedFcVariant == "INAV" and savedArmingOnly then
+                fcVariant      = savedFcVariant
+                fcVersionMajor = savedFcMajor
+                fcVersionMinor = savedFcMinor
+                fcVersionPatch = savedFcPatch
+                connected      = true
+                state          = STATE_DONE
+                log("MSP", "FC already known — resuming arming poll")
+            else
+                state     = STATE_CONNECTING
+                startTime = now
+                log("MSP", fmt("Trying transport %d/%d: %s",
+                    transportIdx, #transportCandidates, transportCandidates[transportIdx].name))
+            end
         end
         return
     end
@@ -995,6 +1029,9 @@ function msp.poll()
 
         if err then
             log("MSP", fmt("Error response for cmd %d", cmd))
+            if status and status.perfProfileInc then
+                status.perfProfileInc("msp_errors")
+            end
         else
             if cmd == MSP_FC_VARIANT then
                 handleFcVariant(buf)
@@ -1038,6 +1075,9 @@ function msp.poll()
     local retryTimeout = REQUEST_TIMEOUT + retries * 0.5
     if currentCmd and (now - lastReqTime) > retryTimeout then
         retries = retries + 1
+        if status and status.perfProfileInc then
+            status.perfProfileInc("msp_errors")
+        end
         if retries > MAX_RETRIES then
             log("MSP", fmt("Timeout after %d retries (cmd=%d)", MAX_RETRIES, currentCmd))
             state = STATE_ERROR

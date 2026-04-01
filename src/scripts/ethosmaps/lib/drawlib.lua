@@ -24,9 +24,9 @@ local floor, max, min = math.floor, math.max, math.min
 local sin, cos, rad = math.sin, math.cos, math.rad
 local sub = string.sub
 local tinsert = table.insert
+local pairs = pairs
 
 local status = nil
-local libs = nil
 
 local drawLib = {}
 local bitmaps = {}
@@ -68,9 +68,14 @@ local function safeSensorName(sensor)
   if sensor == nil then
     return nil
   end
+  -- Guard against corrupted config values (boolean/number instead of source object).
+  local st = type(sensor)
+  if st ~= "userdata" and st ~= "table" then
+    return nil
+  end
   local barTickSerial = (status and status.barTickSerial) or 0
   if barTickSerial ~= _sensorNameCacheTick then
-    _sensorNameCache = {}
+    for k in pairs(_sensorNameCache) do _sensorNameCache[k] = nil end
     _sensorNameCacheTick = barTickSerial
   end
   local key = tostring(sensor)
@@ -133,11 +138,14 @@ local function safeSensorValueText(sensor)
     end
     topBarValueCacheCount = freshCount
   end
-  topBarValueCache[cacheKey] = {
-    tickSerial = barTickSerial,
-    text = valueText
-  }
-  topBarValueCacheCount = topBarValueCacheCount + 1
+  local cached = topBarValueCache[cacheKey]
+  if cached then
+    cached.tickSerial = barTickSerial
+    cached.text = valueText
+  else
+    topBarValueCache[cacheKey] = { tickSerial = barTickSerial, text = valueText }
+    topBarValueCacheCount = topBarValueCacheCount + 1
+  end
 
   return valueText
 end
@@ -556,20 +564,62 @@ end
 
 function drawLib.drawVehicle(x, y, r, heading, symbolType, fillColor)
   -- Dispatches to the correct vehicle symbol drawer based on user config.
-  -- All symbols are drawn with inner fill color + outer outline, like the original arrow.
-  -- fillColor overrides the inner (white) color when provided (e.g. green for NAV, orange for RTH).
+  -- Arrow and Airplane use a semi-transparent filled shadow backdrop instead of
+  -- a hard black outline.  Multirotor already has its own shadow circles.
   fillColor = fillColor or WHITE
+  if not _uavShadowColor then _uavShadowColor = lcd.RGB(0, 0, 0, 0.4) end
   if symbolType == 2 then
-    -- Airplane: compute base trig once and share between fill + outline layers.
+    -- Airplane: 3-triangle shadow (blunt wing tips) + fillColor wireframe on top.
     local baseRad = rad(heading - 90)
     local cb, sb = cos(baseRad), sin(baseRad)
-    drawLib.drawRAirplane(x + cb, y + sb, r - 3, heading, fillColor, cb, sb)
-    drawLib.drawRAirplane(x, y, r, heading, BLACK, cb, sb)
+    -- Shadow vertices at full radius r (wireframe at r-2 → 2px margin).
+    local sNx   = x + r * ( 0.70 * cb)
+    local sNy   = y + r * ( 0.70 * sb)
+    local sWFLx = x + r * (-0.05 * cb + 0.95 * sb)
+    local sWFLy = y + r * (-0.05 * sb - 0.95 * cb)
+    local sWFRx = x + r * (-0.05 * cb - 0.95 * sb)
+    local sWFRy = y + r * (-0.05 * sb + 0.95 * cb)
+    local sWBLx = x + r * (-0.25 * cb + 0.85 * sb)
+    local sWBLy = y + r * (-0.25 * sb - 0.85 * cb)
+    local sWBRx = x + r * (-0.25 * cb - 0.85 * sb)
+    local sWBRy = y + r * (-0.25 * sb + 0.85 * cb)
+    lcd.color(_uavShadowColor)
+    lcd.drawFilledTriangle(sNx, sNy, sWBLx, sWBLy, sWBRx, sWBRy)   -- central (flat rear)
+    lcd.drawFilledTriangle(sNx, sNy, sWFLx, sWFLy, sWBLx, sWBLy)   -- left wing cap
+    lcd.drawFilledTriangle(sNx, sNy, sWFRx, sWFRy, sWBRx, sWBRy)   -- right wing cap
+    drawLib.drawRAirplane(x, y, r - 2, heading, fillColor, cb, sb)
   elseif symbolType == 3 then
     drawLib.drawRMultirotor(x, y, r, heading, fillColor)
   else
-    drawLib.drawRArrow(x, y, r - 5, heading, fillColor)
-    drawLib.drawRArrow(x, y, r, heading, BLACK)
+    -- Arrow: shadow filled chevron (2 triangles, 2px bigger) + fillColor wireframe.
+    local baseRad = rad(heading - 90)
+    local cb, sb = cos(baseRad), sin(baseRad)
+    local c150, s150 = cos(baseRad + ARROW_ANG_150), sin(baseRad + ARROW_ANG_150)
+    local cn150, sn150 = cos(baseRad + ARROW_ANG_N150), sin(baseRad + ARROW_ANG_N150)
+    local c180, s180 = cos(baseRad + ARROW_ANG_180), sin(baseRad + ARROW_ANG_180)
+    -- Shadow at r-3 (2px bigger than fill at r-5)
+    local sr = r - 3
+    local sx1, sy1 = x + sr * cb, y + sr * sb
+    local sx2, sy2 = x + sr * c150, y + sr * s150
+    local sx3, sy3 = x + sr * cn150, y + sr * sn150
+    local sr2 = sr * 0.5
+    local sx4, sy4 = x + sr2 * c180, y + sr2 * s180
+    lcd.color(_uavShadowColor)
+    lcd.drawFilledTriangle(sx1, sy1, sx2, sy2, sx4, sy4)
+    lcd.drawFilledTriangle(sx1, sy1, sx3, sy3, sx4, sy4)
+    -- Fill wireframe at r-5
+    local fr = r - 5
+    local fx1, fy1 = x + fr * cb, y + fr * sb
+    local fx2, fy2 = x + fr * c150, y + fr * s150
+    local fx3, fy3 = x + fr * cn150, y + fr * sn150
+    local fr2 = fr * 0.5
+    local fx4, fy4 = x + fr2 * c180, y + fr2 * s180
+    lcd.pen(SOLID)
+    lcd.color(fillColor)
+    lcd.drawLine(fx1, fy1, fx2, fy2)
+    lcd.drawLine(fx1, fy1, fx3, fy3)
+    lcd.drawLine(fx2, fy2, fx4, fy4)
+    lcd.drawLine(fx3, fy3, fx4, fy4)
   end
 end
 
@@ -606,17 +656,15 @@ end
 
 -- Cohen-Sutherland line clipping against a rectangular viewport.
 -- Returns clipped x1,y1,x2,y2 or nil if the segment is entirely outside.
+-- NOTE: outCode is inlined (not a local closure) to save ~1,500+ VM
+-- opcodes per paint frame — critical for the ETHOS 40K instruction limit.
 function drawLib.clipLine(x1, y1, x2, y2, xmin, ymin, xmax, ymax)
-  local function outCode(x, y)
-    local code = 0
-    if x < xmin then code = code | 1
-    elseif x > xmax then code = code | 2 end
-    if y < ymin then code = code | 8
-    elseif y > ymax then code = code | 4 end
-    return code
-  end
-  local code1 = outCode(x1, y1)
-  local code2 = outCode(x2, y2)
+  local code1 = 0
+  if x1 < xmin then code1 = 1 elseif x1 > xmax then code1 = 2 end
+  if y1 < ymin then code1 = code1 | 8 elseif y1 > ymax then code1 = code1 | 4 end
+  local code2 = 0
+  if x2 < xmin then code2 = 1 elseif x2 > xmax then code2 = 2 end
+  if y2 < ymin then code2 = code2 | 8 elseif y2 > ymax then code2 = code2 | 4 end
   for _ = 1, 20 do
     if (code1 | code2) == 0 then return x1, y1, x2, y2 end
     if (code1 & code2) ~= 0 then return nil end
@@ -631,8 +679,17 @@ function drawLib.clipLine(x1, y1, x2, y2, xmin, ymin, xmax, ymax)
     else
       y = y1 + (y2 - y1) * (xmin - x1) / (x2 - x1); x = xmin
     end
-    if codeOut == code1 then x1 = x; y1 = y; code1 = outCode(x, y)
-    else x2 = x; y2 = y; code2 = outCode(x, y) end
+    if codeOut == code1 then
+      x1 = x; y1 = y
+      code1 = 0
+      if x1 < xmin then code1 = 1 elseif x1 > xmax then code1 = 2 end
+      if y1 < ymin then code1 = code1 | 8 elseif y1 > ymax then code1 = code1 | 4 end
+    else
+      x2 = x; y2 = y
+      code2 = 0
+      if x2 < xmin then code2 = 1 elseif x2 > xmax then code2 = 2 end
+      if y2 < ymin then code2 = code2 | 8 elseif y2 > ymax then code2 = code2 | 4 end
+    end
   end
   return nil
 end
@@ -640,7 +697,6 @@ end
 function drawLib.init(param_status, param_libs)
   -- Stores shared state references so drawing helpers can read status values and call sibling libraries.
   status = param_status
-  libs = param_libs
   topBarValueCache = {}
   topBarValueCacheCount = 0
   return drawLib
