@@ -75,6 +75,13 @@ local cacheCount = 0
 -- ETHOS-BITMAP-GC-TIMING.md for a detailed write-up.
 local pendingGCBeforeLoad = false
 
+-- Format cache for fast-path tile loading.  After the first tile is successfully
+-- loaded, its extension and path type are stored so subsequent tiles in the same
+-- map build skip the full probe chain (saves 1-3 lcd.loadBitmap() miss calls,
+-- each costing ~5-8ms of SD-card FAT directory traversal).  Reset in clearCache()
+-- on zoom, provider, or map-type change so the next map build re-probes.
+local cachedTileFormat = nil  -- { ext = ".jpg"|... , isYaapu = true|false } or nil
+
 -- One-time log keys so we don't flood the debug log with repeated messages.
 local lastTileFormatLogByKey = {}
 local lastNoTilesLogKey      = nil
@@ -108,12 +115,23 @@ local function getGoogleFallbackBasePath(mapType, tilePath)
   return "/bitmaps/yaapu/maps/" .. yaapuMapType .. fallbackTilePath
 end
 
+local function tryLoadBitmap(path)
+  -- Safe wrapper: lcd.loadBitmap() may throw on missing files in ETHOS.
+  -- pcall catches the error so we skip the separate fileExists() open,
+  -- cutting SD-card I/O from 2 opens to 1 per tile (~5-8ms saved).
+  local ok, bmp = pcall(lcd.loadBitmap, path)
+  if ok and bmp ~= nil then
+    return bmp
+  end
+  return nil
+end
+
 local function loadFirstExisting(tilePath, ...)
   -- Probes candidate full file paths and loads the first one that exists on disk.
   local paths = { ... }
   for i = 1, #paths do
-    if fileExists(paths[i]) then
-      local bmp = lcd.loadBitmap(paths[i])
+    local bmp = tryLoadBitmap(paths[i])
+    if bmp ~= nil then
       mapBitmapByPath[tilePath] = bmp
       return bmp, paths[i]
     end
@@ -172,6 +190,27 @@ local function loadTileFromDisk(tilePath)
     local PROVIDER_FOLDERS = { [2] = "GOOGLE", [3] = "ESRI", [4] = "OSM" }
     local folder = PROVIDER_FOLDERS[provider] or ("PROVIDER" .. tostring(provider))
     local base   = "/bitmaps/ethosmaps/maps/" .. folder .. "/" .. mapType .. tilePath
+
+    -- Fast path: if we already know the tile format from a previous load in this
+    -- map build, try that extension directly.  Saves 1-3 failed lcd.loadBitmap()
+    -- calls (each ~5-8ms of SD-card FAT directory traversal).
+    if cachedTileFormat then
+      local fastPath
+      if cachedTileFormat.isYaapu then
+        fastPath = getGoogleFallbackBasePath(mapType, tilePath) .. cachedTileFormat.ext
+      else
+        fastPath = base .. cachedTileFormat.ext
+      end
+      local fastBmp = tryLoadBitmap(fastPath)
+      if fastBmp ~= nil then
+        mapBitmapByPath[tilePath] = fastBmp
+        return fastBmp
+      end
+      -- Fast path miss for this tile -> fall through to full probe chain.
+      -- This handles mixed-format tile sets where most tiles share one format
+      -- but a few may exist only in a different format or yaapu fallback.
+    end
+
     if provider == 2 then
       local yaapuBase  = getGoogleFallbackBasePath(mapType, tilePath)
       attemptedPaths   = { base .. ".jpg", base .. ".bmp", base .. ".png",
@@ -185,6 +224,19 @@ local function loadTileFromDisk(tilePath)
   end
 
   if bmp ~= nil then
+    -- Cache the detected format for fast-path loading of subsequent tiles.
+    -- Only set on the first successful load; later loads that find a different
+    -- format (mixed tile sets) do not overwrite so the majority format stays
+    -- prioritized.  Reset in clearCache() on the next heavy update.
+    if cachedTileFormat == nil and type(loadedPath) == "string" then
+      local ext = loadedPath:match("(%.[%a%d]+)$")
+      if ext then
+        ext = ext:lower()
+        local isYaapu = (loadedPath:find("/bitmaps/yaapu/", 1, true) == 1)
+        cachedTileFormat = { ext = ext, isYaapu = isYaapu }
+      end
+    end
+
     -- Log the tile format the first time it is seen for this provider+mapType combination.
     if status.debugEnabled and libs and libs.utils and libs.utils.logDebug then
       local logKey = fmt("provider:%s|mapType:%s", tostring(provider), tostring(mapType))
@@ -261,8 +313,8 @@ function tileLoader.enqueue(tilePath, isHighPriority)
   end
 end
 
-function tileLoader.processQueue(maxCount)
-  -- Loads up to maxCount tiles from the queue.
+function tileLoader.processQueue(budgetMs)
+  -- Loads tiles from the queue until the time budget is exhausted.
   -- Called once per wakeup() tick so SD I/O is spread across frames instead
   -- of blocking a single paint() call.  High-priority tiles are always
   -- drained before low-priority ones.
@@ -272,8 +324,9 @@ function tileLoader.processQueue(maxCount)
     return 0  -- Both queues empty; nothing to do.
   end
 
-  local loaded = 0
-  local limit  = maxCount or 3
+  local loaded   = 0
+  local budget   = budgetMs or 15
+  local deadline = os_clock() * 1000 + budget
 
   -- Flush dead bitmap userdata before allocating new ones.  trimCache() sets
   -- the flag whenever it evicts entries; a single full GC cycle here ensures
@@ -287,7 +340,7 @@ function tileLoader.processQueue(maxCount)
   local perfActive = status and status.perfActive
   local perfAddMs = perfActive and status.perfProfileAddMs or nil
 
-  while highHead <= highLen and loaded < limit do
+  while highHead <= highLen do
     local path        = highQueue[highHead]
     highHead          = highHead + 1
     if path ~= nil then
@@ -301,24 +354,28 @@ function tileLoader.processQueue(maxCount)
         end
         cacheCount = cacheCount + 1
         loaded     = loaded + 1
+        if os_clock() * 1000 >= deadline then break end
       end
     end
   end
 
-  while lowHead <= lowLen and loaded < limit do
-    local path        = lowQueue[lowHead]
-    lowHead           = lowHead + 1
-    if path ~= nil then
-      lowQueueSet[path] = nil
-      if mapBitmapByPath[path] == nil then
-        local t0 = os_clock() * 1000
-        loadTileFromDisk(path)
-        local elapsed = os_clock() * 1000 - t0
-        if perfAddMs then
-          perfAddMs("tile_load_ms", elapsed)
+  if os_clock() * 1000 < deadline then
+    while lowHead <= lowLen do
+      local path        = lowQueue[lowHead]
+      lowHead           = lowHead + 1
+      if path ~= nil then
+        lowQueueSet[path] = nil
+        if mapBitmapByPath[path] == nil then
+          local t0 = os_clock() * 1000
+          loadTileFromDisk(path)
+          local elapsed = os_clock() * 1000 - t0
+          if perfAddMs then
+            perfAddMs("tile_load_ms", elapsed)
+          end
+          cacheCount = cacheCount + 1
+          loaded     = loaded + 1
+          if os_clock() * 1000 >= deadline then break end
         end
-        cacheCount = cacheCount + 1
-        loaded     = loaded + 1
       end
     end
   end
@@ -357,6 +414,7 @@ function tileLoader.clearCache()
   lowQueueSet     = {}
   lowHead         = 1
   cacheCount      = 0
+  cachedTileFormat       = nil
   lastTileFormatLogByKey = {}
   lastNoTilesLogKey      = nil
 end

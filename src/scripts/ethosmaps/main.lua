@@ -1699,7 +1699,10 @@ local function wakeupInner(widget)
 
   if mapLibs and mapLibs.tileLoader then
     if mapLibs.tileLoader.getQueueLength() > 0 then
-      local tilesLoaded = mapLibs.tileLoader.processQueue(3)
+      -- Adaptive budget: pan needs smooth fps (10ms), zoom/idle can bulk-load (30ms).
+      local ps = mapStatus.panState
+      local budget = (ps == PAN_DRAGGING or ps == PAN_GRACE) and 10 or 30
+      local tilesLoaded = mapLibs.tileLoader.processQueue(budget)
       if perfActive and tilesLoaded > 0 then
         perfInc("tiles_loaded", tilesLoaded)
       end
