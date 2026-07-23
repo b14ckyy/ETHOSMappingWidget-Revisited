@@ -1957,6 +1957,7 @@ local MAP_TYPE_LABELS = {
   [6] = "Outdoor",
   [7] = "Topo",
   [8] = "Winter",
+  [9] = "OSM Style",
 }
 
 -- On-disk folder names for each map provider under /bitmaps/ethosmaps/maps/
@@ -2028,13 +2029,14 @@ local function getMapTypeFolder(provider, mapTypeId)
     return nil
   end
   if provider == 5 then
-    -- MapTiler: Satellite, Hybrid, Street, plus MapTiler-only Outdoor, Topo, Winter.
+    -- MapTiler: Satellite, Hybrid, Street, plus MapTiler-only Outdoor, Topo, Winter, OSM Style.
     if mapTypeId == 1 then return "Satellite" end
     if mapTypeId == 2 then return "Hybrid" end
     if mapTypeId == 5 then return "Street" end
     if mapTypeId == 6 then return "Outdoor" end
     if mapTypeId == 7 then return "Topo" end
     if mapTypeId == 8 then return "Winter" end
+    if mapTypeId == 9 then return "OSM Style" end
     return nil
   end
   -- Google (provider 2): Satellite, Hybrid, Map, Terrain.
@@ -2097,7 +2099,7 @@ local function getAvailableProviderChoices(forceRefresh)
   local choices = {}
   for provider=1,5 do
     local available = false
-    for typeId=1,8 do
+    for typeId=1,9 do
       if mapTypeFolderExists(provider, typeId) then
         available = true
         break
@@ -2120,7 +2122,7 @@ local function getAvailableMapTypeChoices(provider, forceRefresh)
   end
 
   local choices = {}
-  for typeId=1,8 do
+  for typeId=1,9 do
     local folder = getMapTypeFolder(provider, typeId)
     if folder ~= nil and mapTypeFolderExists(provider, typeId) then
       tinsert(choices, {MAP_TYPE_LABELS[typeId], typeId})
