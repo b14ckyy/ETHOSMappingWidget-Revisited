@@ -1945,6 +1945,7 @@ local MAP_PROVIDER_LABELS = {
   [2] = "Google",
   [3] = "ESRI",
   [4] = "OSM",
+  [5] = "MapTiler",
 }
 
 local MAP_TYPE_LABELS = {
@@ -1953,6 +1954,9 @@ local MAP_TYPE_LABELS = {
   [3] = "Map",
   [4] = "Terrain",
   [5] = "Street",
+  [6] = "Outdoor",
+  [7] = "Topo",
+  [8] = "Winter",
 }
 
 -- On-disk folder names for each map provider under /bitmaps/ethosmaps/maps/
@@ -1960,6 +1964,7 @@ local PROVIDER_FOLDER_NAMES = {
   [2] = "GOOGLE",
   [3] = "ESRI",
   [4] = "OSM",
+  [5] = "MAPTILER",
 }
 
 local function directoryExists(path)
@@ -2022,6 +2027,16 @@ local function getMapTypeFolder(provider, mapTypeId)
     if mapTypeId == 5 then return "Street" end
     return nil
   end
+  if provider == 5 then
+    -- MapTiler: Satellite, Hybrid, Street, plus MapTiler-only Outdoor, Topo, Winter.
+    if mapTypeId == 1 then return "Satellite" end
+    if mapTypeId == 2 then return "Hybrid" end
+    if mapTypeId == 5 then return "Street" end
+    if mapTypeId == 6 then return "Outdoor" end
+    if mapTypeId == 7 then return "Topo" end
+    if mapTypeId == 8 then return "Winter" end
+    return nil
+  end
   -- Google (provider 2): Satellite, Hybrid, Map, Terrain.
   if mapTypeId == 1 then return "Satellite" end
   if mapTypeId == 2 then return "Hybrid" end
@@ -2080,9 +2095,9 @@ end
 
 local function getAvailableProviderChoices(forceRefresh)
   local choices = {}
-  for provider=1,4 do
+  for provider=1,5 do
     local available = false
-    for typeId=1,5 do
+    for typeId=1,8 do
       if mapTypeFolderExists(provider, typeId) then
         available = true
         break
@@ -2105,7 +2120,7 @@ local function getAvailableMapTypeChoices(provider, forceRefresh)
   end
 
   local choices = {}
-  for typeId=1,5 do
+  for typeId=1,8 do
     local folder = getMapTypeFolder(provider, typeId)
     if folder ~= nil and mapTypeFolderExists(provider, typeId) then
       tinsert(choices, {MAP_TYPE_LABELS[typeId], typeId})
