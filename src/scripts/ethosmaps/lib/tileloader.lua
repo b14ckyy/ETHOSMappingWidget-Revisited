@@ -187,7 +187,7 @@ local function loadTileFromDisk(tilePath)
     attemptedPaths    = { onlyPath }
     bmp, loadedPath   = loadFirstExisting(tilePath, onlyPath)
   else
-    local PROVIDER_FOLDERS = { [2] = "GOOGLE", [3] = "ESRI", [4] = "OSM" }
+    local PROVIDER_FOLDERS = { [2] = "GOOGLE", [3] = "ESRI", [4] = "OSM", [5] = "MAPTILER" }
     local folder = PROVIDER_FOLDERS[provider] or ("PROVIDER" .. tostring(provider))
     local base   = "/bitmaps/ethosmaps/maps/" .. folder .. "/" .. mapType .. tilePath
 
