@@ -56,3 +56,7 @@ build/release/
 *.x86_64
 *.hex
 
+
+# Claude Code project instructions (local only)
+CLAUDE.md
+.claude/
