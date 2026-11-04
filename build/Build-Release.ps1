@@ -4,19 +4,22 @@
 # 1. Stages src/scripts/ethosmaps/ into build/release/scripts/ethosmaps/ and generates
 #    ethos_lua_manifest.json (FrSky Lua package spec V1, Docs/development/tools/ethos_good_lua.md).
 # 2. Creates two ZIPs from the same staged tree:
-#      ETHOSMappingWidget-<ver>-<hash>-suite.zip   manifest + script files at ZIP root (Ethos Suite install)
-#      ETHOSMappingWidget-<ver>-<hash>-sdcard.zip  scripts/ethosmaps/... (extract to SD card root)
-#    and validates the Suite ZIP against the spec.
+#      ETHOSMappingWidget-<ver>[-<hash>]-suite.zip   manifest + script files at ZIP root (Ethos Suite install)
+#      ETHOSMappingWidget-<ver>[-<hash>]-sdcard.zip  scripts/ethosmaps/... (extract to SD card root)
+#    and validates the Suite ZIP against the spec. Dev builds carry the commit hash in the file
+#    name; -Release omits it and requires a clean working tree.
 # 3. Deploys the staged script folder into the active VS Code simulator folder
 #    (simulators/<board>_<protocol>@<release>/, resolved from .vscode/settings.json).
 #
 # Usage:  .\build\Build-Release.ps1
 #         .\build\Build-Release.ps1 -SimDir simulators\X20RS_FCC@nightly26
 #         .\build\Build-Release.ps1 -NoDeploy
+#         .\build\Build-Release.ps1 -Release -NoDeploy     # files for a GitHub release
 
 param(
     [string]$SimDir,
-    [switch]$NoDeploy
+    [switch]$NoDeploy,
+    [switch]$Release
 )
 
 Set-StrictMode -Version Latest
@@ -104,7 +107,13 @@ $commitId = git -C $repoRoot rev-parse --short HEAD 2>$null
 if (-not $commitId) { $commitId = 'nogit' }
 $commitId = $commitId.Trim()
 
-$zipBase     = 'ETHOSMappingWidget-' + $widgetVersion + '-' + $commitId
+if ($Release) {
+    $dirty = git -C $repoRoot status --porcelain 2>$null
+    if ($dirty) { throw 'Release build requires a clean working tree (commit first)' }
+    $zipBase = 'ETHOSMappingWidget-' + $widgetVersion
+} else {
+    $zipBase = 'ETHOSMappingWidget-' + $widgetVersion + '-' + $commitId
+}
 $suiteZip    = Join-Path $buildDir ($zipBase + '-suite.zip')
 $sdcardZip   = Join-Path $buildDir ($zipBase + '-sdcard.zip')
 

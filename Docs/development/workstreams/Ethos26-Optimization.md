@@ -132,7 +132,7 @@ Needs an A/B with a dense mission and a long trail.
 
 ### O10 — Tile format re-check on 26.x  `INFO`
 
-Re-run `TILE-LOADING-BENCHMARK.md` (JPG vs PNG, internal vs SD) on 26.1.2. BMP: see B1.
+Re-run `TILE-LOADING-BENCHMARK.md` (JPG vs BMP vs PNG, internal vs SD) on 26.1.2.
 
 ---
 
@@ -149,32 +149,19 @@ orientation, not as widget numbers.
 | Eager load (W02/W03) | JPG ~8 ms, PNG ~8 ms per 32×32; 2 KB `bmpFree` each, ~120 B Lua heap |
 | Blits | Unscaled 32×32 JPG ~116 µs; scaled ~2 Mpx/s (48 px 1.3 ms, 96 px 4.5 ms, 192 px 17 ms) |
 | `getInstructionsUsage()` in a system tool | counts drawing work, not VM instructions: ~2 100 rects = 100 %, weights ≈ rect 1, color 0.55, clip 1, blit 1.5. After hitting 100 % the counter stays 0 until the tool exits (RC7 bug) |
-| BMP | 24-bit BI_RGB: `loadBitmap` returns a handle, `width()` = 0, nothing is drawn, no bitmap RAM used |
+| BMP | No usable result: the doombench BMP test files were in a wrong format (confirmed by bsongis). BMP tiles work on 26.2.0-RC7 |
 | RAM | Lua heap and bitmap pool behave as separate pools (~720 KB vs ~2.5 MB free at tool start) |
 
 ---
 
-## 4. Bugs / compatibility
-
-### B1 — BMP tiles not drawn on 26.2.0-RC7  `OPEN · reported to bsongis 2026-11-04`
-
-`tryLoadBitmap()` accepts any non-nil handle, so a BMP tile that loads with `width() == 0`
-counts as loaded: no fallback to JPG/PNG, and `cachedTileFormat` then sends every following
-tile to `.bmp` → empty map for BMP users on 26.2. Pending the answer from bsongis: either it is
-fixed before 26.2 final, or `tryLoadBitmap()` rejects handles with `width() == 0` and
-MapTilesGuide drops the BMP recommendation for 26.2.
-
----
-
-## 5. Housekeeping
+## 4. Housekeeping
 
 - `resetLib.lua` lacks the GPL header.
 - `main.lua` periodic GC comment is German ("Step B: Periodische Garbage Collection") → English when O4 touches it.
 
-## 6. Order
+## 5. Order
 
 1. **O9** swipe mode (+ the `SWIPE` debug line) → hardware test on 26.1.2 and 1.6.x.
 2. **PERF additions** (`gc_ms`, `instr%`, mem row) — can ship together with O9.
 3. Next optimization round: **O4** first, then O3 + O6.
-4. B1 as soon as bsongis answers.
-5. Later / experiments: O2, O8, O7, O10. O1 stays parked.
+4. Later / experiments: O2, O8, O7, O10. O1 stays parked.

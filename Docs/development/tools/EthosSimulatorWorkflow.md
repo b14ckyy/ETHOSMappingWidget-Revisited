@@ -76,7 +76,8 @@ bind `ethos.showMenu` in your user keybindings if you want a shortcut.
   `-sdcard.zip`, validates the Suite ZIP against the package spec and mirrors the staged folder into
   the simulator (stale files and `.luac` caches removed). Fails if `WIDGET_VERSION` is not `x.y.z`
   or `CHANGELOG.md` has no `## x.y.z` section (manifest release notes). `-NoDeploy` skips the
-  simulator, `-SimDir <path>` overrides the target.
+  simulator, `-SimDir <path>` overrides the target. `-Release` drops the commit hash from the
+  file names (GitHub release files) and refuses to run on an uncommitted working tree.
 
 `Build-Release.ps1` reads board/protocol/release from `.vscode/settings.json`, so it always deploys to
 the simulator that is active in VS Code.

@@ -6,8 +6,8 @@ Each release comes as two ZIPs with the same content:
 
 | ZIP | Use it for |
 |---|---|
-| `ETHOSMappingWidget-<version>-<hash>-suite.zip` | **Ethos Suite** (recommended) |
-| `ETHOSMappingWidget-<version>-<hash>-sdcard.zip` | Manual install by copying to the SD card |
+| `ETHOSMappingWidget-<version>-suite.zip` | **Ethos Suite** (recommended) |
+| `ETHOSMappingWidget-<version>-sdcard.zip` | Manual install by copying to the SD card |
 
 ## Option A: Install with Ethos Suite (recommended)
 
