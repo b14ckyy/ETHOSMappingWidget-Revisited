@@ -1,5 +1,8 @@
 <#
 .SYNOPSIS
+    LEGACY (obsolete since bsongis.ethos 0.6, 2026-09): use Ethos DevTools "Play Telemetry CSV" instead.
+    Kept only as reference for the INAV SmartPort AppID mapping below; scheduled for removal.
+
     Replays an EdgeTX telemetry log CSV into RADIO/sensors.json for live ETHOS simulator injection.
 
 .DESCRIPTION

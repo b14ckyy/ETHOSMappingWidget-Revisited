@@ -119,8 +119,8 @@ internal vs SD) on 26.1.2 before assuming the 1.6 numbers still hold — especia
 
 ## 3. Housekeeping found on the way
 
-- `RADIO/scripts/ethosmaps/lib/prepaint.lua` is a stale file from March that the build never
-  removes — `Build-Release.ps1` copies but does not clean `RADIO/scripts/ethosmaps/lib/`.
+- ~~`RADIO/scripts/ethosmaps/lib/prepaint.lua` stale file~~ — fixed 2026-09-29: `Build-Release.ps1`
+  now mirrors `lib/` into the simulator folder and removes stale files and `.luac` caches.
 - `msp.lua`, `compute.lua`, `resetLib.lua` lack the GPL header.
 - MapTiler (PR #49) and the ff0005e tile-I/O change have no CHANGELOG/README/MapTilesGuide entry.
 

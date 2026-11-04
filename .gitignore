@@ -2,7 +2,9 @@
 luac.out
 *.luac
 
-# ETHOS Simulator working directory (runtime only, not tracked)
+# ETHOS Simulator working directories (bsongis.ethos >= 0.6 layout, runtime only)
+simulators/
+# Legacy simulator root (pre-0.6 extension layout)
 RADIO/
 
 # Layout files (distributed as separate ZIP, not part of widget release)

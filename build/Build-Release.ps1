@@ -1,11 +1,19 @@
 # Build-Release.ps1
 # Builds a release package for the ETHOS Mapping Widget.
 #
-# 1. Copies all source files from src/ into build/release/ with ETHOS layout.
+# 1. Copies all source files from src/ into build/release/ with ETHOS SD-card layout.
 # 2. Creates a ZIP archive ready to extract onto the radio SD card.
-# 3. Deploys the release into the local RADIO/ simulator directory.
+# 3. Deploys the release into the active VS Code simulator folder
+#    (simulators/<board>_<protocol>@<release>/, resolved from .vscode/settings.json).
 #
 # Usage:  .\build\Build-Release.ps1
+#         .\build\Build-Release.ps1 -SimDir simulators\X20RS_FCC@nightly26
+#         .\build\Build-Release.ps1 -NoDeploy
+
+param(
+    [string]$SimDir,
+    [switch]$NoDeploy
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -16,11 +24,35 @@ $repoRoot   = Split-Path -Parent $PSScriptRoot
 $srcDir     = Join-Path $repoRoot 'src'
 $buildDir   = Join-Path $repoRoot 'build'
 $releaseDir = Join-Path $buildDir 'release'
-$radioDir   = Join-Path $repoRoot 'RADIO'
+
+# --- Simulator target (bsongis.ethos >= 0.6 layout) ---
+
+function Resolve-SimDir {
+    $settingsPath = Join-Path (Join-Path $repoRoot '.vscode') 'settings.json'
+    if (-not (Test-Path $settingsPath)) { return $null }
+    # Strip // line comments so ConvertFrom-Json (PS 5.1) accepts the file.
+    $raw = (Get-Content $settingsPath -Raw) -replace '(?m)^\s*//.*$', ''
+    try { $json = $raw | ConvertFrom-Json } catch { return $null }
+    $board    = $json.'ethos.board'
+    $protocol = $json.'ethos.protocol'
+    $release  = $json.'ethos.release'
+    $folder   = $json.'ethos.simulatorsFolder'
+    if (-not $release) { $release = 'nightly26' }
+    if (-not $folder)  { $folder  = 'simulators' }
+    if (-not $board -or -not $protocol) { return $null }
+    return Join-Path (Join-Path $repoRoot $folder) ("{0}_{1}@{2}" -f $board, $protocol, $release)
+}
+
+if (-not $NoDeploy) {
+    if ($SimDir) {
+        if (-not [System.IO.Path]::IsPathRooted($SimDir)) { $SimDir = Join-Path $repoRoot $SimDir }
+    } else {
+        $SimDir = Resolve-SimDir
+    }
+}
 
 # --- Version ---
 
-# Extract WIDGET_VERSION from main.lua (e.g. "2.0-beta1")
 $mainLua = Join-Path (Join-Path (Join-Path $srcDir 'scripts') 'ethosmaps') 'main.lua'
 $widgetVersion = 'unknown'
 foreach ($line in (Get-Content $mainLua)) {
@@ -30,7 +62,6 @@ foreach ($line in (Get-Content $mainLua)) {
     }
 }
 
-# Short commit hash for traceability
 $commitId = git -C $repoRoot rev-parse --short HEAD 2>$null
 if (-not $commitId) { $commitId = 'nogit' }
 $commitId = $commitId.Trim()
@@ -44,6 +75,9 @@ Write-Host '=== ETHOS Mapping Widget Build ===' -ForegroundColor Cyan
 Write-Host "Version : $widgetVersion ($commitId)"
 Write-Host "Source  : $srcDir"
 Write-Host "Release : $releaseDir"
+if ($NoDeploy)      { Write-Host 'Deploy  : skipped (-NoDeploy)' }
+elseif ($SimDir)    { Write-Host "Deploy  : $SimDir" }
+else                { Write-Host 'Deploy  : skipped (no simulator configured in .vscode/settings.json)' -ForegroundColor Yellow }
 Write-Host ''
 
 if (Test-Path $releaseDir) {
@@ -58,24 +92,20 @@ if (Test-Path $zipPath) {
 
 Write-Host 'Staging source files...' -ForegroundColor Green
 
-# Bitmaps
 $bmpSrc = Join-Path (Join-Path (Join-Path $srcDir 'bitmaps') 'ethosmaps') 'bitmaps'
 $bmpDst = Join-Path (Join-Path (Join-Path $releaseDir 'bitmaps') 'ethosmaps') 'bitmaps'
 New-Item -ItemType Directory -Path $bmpDst -Force | Out-Null
 Copy-Item -Path (Join-Path $bmpSrc '*') -Destination $bmpDst -Recurse
 
-# Scripts main.lua
 $scriptSrc = Join-Path (Join-Path $srcDir 'scripts') 'ethosmaps'
 $scriptDst = Join-Path (Join-Path $releaseDir 'scripts') 'ethosmaps'
 New-Item -ItemType Directory -Path $scriptDst -Force | Out-Null
 Copy-Item -Path (Join-Path $scriptSrc 'main.lua') -Destination $scriptDst
 
-# Scripts lib/
 $libDst = Join-Path $scriptDst 'lib'
 New-Item -ItemType Directory -Path $libDst -Force | Out-Null
 Copy-Item -Path (Join-Path (Join-Path $scriptSrc 'lib') '*') -Destination $libDst -Recurse
 
-# Scripts audio/
 $audioDst = Join-Path $scriptDst 'audio'
 New-Item -ItemType Directory -Path $audioDst -Force | Out-Null
 Copy-Item -Path (Join-Path (Join-Path $scriptSrc 'audio') '*') -Destination $audioDst -Recurse
@@ -91,28 +121,42 @@ Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath -Fo
 $zipSizeKB = [math]::Round((Get-Item $zipPath).Length / 1KB, 1)
 Write-Host "ZIP created ($zipSizeKB KB)" -ForegroundColor Green
 
-# --- Deploy to RADIO ---
+# --- Deploy to simulator ---
 
-Write-Host 'Deploying to RADIO/ simulator...' -ForegroundColor Green
+if (-not $NoDeploy -and $SimDir) {
+    Write-Host 'Deploying to simulator...' -ForegroundColor Green
 
-$radioBmpDst = Join-Path (Join-Path (Join-Path $radioDir 'bitmaps') 'ethosmaps') 'bitmaps'
-New-Item -ItemType Directory -Path $radioBmpDst -Force | Out-Null
-Copy-Item -Path (Join-Path $bmpDst '*') -Destination $radioBmpDst -Force -Recurse
+    $simBmpDst = Join-Path (Join-Path (Join-Path $SimDir 'bitmaps') 'ethosmaps') 'bitmaps'
+    New-Item -ItemType Directory -Path $simBmpDst -Force | Out-Null
+    Copy-Item -Path (Join-Path $bmpDst '*') -Destination $simBmpDst -Force -Recurse
 
-$radioScriptDst = Join-Path (Join-Path $radioDir 'scripts') 'ethosmaps'
-New-Item -ItemType Directory -Path $radioScriptDst -Force | Out-Null
-Copy-Item -Path (Join-Path $scriptDst 'main.lua') -Destination $radioScriptDst -Force
+    $simScriptDst = Join-Path (Join-Path $SimDir 'scripts') 'ethosmaps'
+    New-Item -ItemType Directory -Path $simScriptDst -Force | Out-Null
+    Copy-Item -Path (Join-Path $scriptDst 'main.lua') -Destination $simScriptDst -Force
 
-$radioLibDst = Join-Path $radioScriptDst 'lib'
-New-Item -ItemType Directory -Path $radioLibDst -Force | Out-Null
-Copy-Item -Path (Join-Path $libDst '*') -Destination $radioLibDst -Force -Recurse
+    $simLibDst = Join-Path $simScriptDst 'lib'
+    New-Item -ItemType Directory -Path $simLibDst -Force | Out-Null
+    Copy-Item -Path (Join-Path $libDst '*') -Destination $simLibDst -Force -Recurse
 
-$radioAudioDst = Join-Path $radioScriptDst 'audio'
-New-Item -ItemType Directory -Path $radioAudioDst -Force | Out-Null
-Copy-Item -Path (Join-Path $audioDst '*') -Destination $radioAudioDst -Force -Recurse
+    $simAudioDst = Join-Path $simScriptDst 'audio'
+    New-Item -ItemType Directory -Path $simAudioDst -Force | Out-Null
+    Copy-Item -Path (Join-Path $audioDst '*') -Destination $simAudioDst -Force -Recurse
+
+    # Mirror: drop lib files that no longer exist in src/ and stale bytecode caches,
+    # otherwise ETHOS keeps loading deleted modules / outdated .luac files.
+    $stale = @()
+    $stale += Get-ChildItem -Path $simLibDst -File | Where-Object {
+        -not (Test-Path (Join-Path $libDst $_.Name)) -or $_.Extension -eq '.luac'
+    }
+    $stale += Get-ChildItem -Path $simScriptDst -File -Filter '*.luac'
+    foreach ($f in $stale) {
+        Write-Host "  removing stale $($f.FullName.Substring($SimDir.Length + 1))" -ForegroundColor Yellow
+        Remove-Item -Force $f.FullName
+    }
+}
 
 Write-Host ''
 Write-Host '=== Build complete ===' -ForegroundColor Cyan
 Write-Host "  Release : $releaseDir"
 Write-Host "  ZIP     : $zipPath"
-Write-Host "  RADIO   : $radioDir"
+if (-not $NoDeploy -and $SimDir) { Write-Host "  SIM     : $SimDir" }

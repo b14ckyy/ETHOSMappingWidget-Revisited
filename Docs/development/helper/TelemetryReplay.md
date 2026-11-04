@@ -1,122 +1,61 @@
 # Telemetry Replay Helper
 
 ## Purpose
-`replay-telemetry-log.ps1` replays a CSV telemetry log line by line into `RADIO/sensors.json` so the ETHOS simulator receives live sensor updates.
 
-The replay tooling and demo logs currently live in:
+Feed recorded or synthetic flight telemetry into the ETHOS simulator so the widget can be tested
+with moving GPS data, without a receiver. Since `bsongis.ethos` 0.6 this is done by the
+**Ethos DevTools** extension (`flyingeek.ethos-devtools`) through the simulator's
+`ethos.injectTelemetry` API — no extension patch, no PowerShell script.
 
-`Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/`
+## How to replay
 
-## Files
-| File | Purpose |
-|---|---|
-| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/replay-telemetry-log.ps1` | Replay script |
-| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/DemoTelemetry.csv` | Base demo log (EdgeTX format) |
-| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/Synthetic_Logs/DemoTelemetry_Synthetic_1min_straightLine_250ms.csv` | Deterministic 1-minute straight-line demo log |
-| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/Synthetic_Logs/DemoTelemetry_Synthetic_5min_pattern_250ms.csv` | Deterministic 5-minute mixed-pattern demo log |
-| `RADIO/sensors.json` | Output — read live by the ETHOS extension |
+1. Start the simulator (status bar menu → ▶️ Start SIM) and open the widget.
+2. Status bar menu → 📊 **Play Telemetry CSV** (or Command Palette *Ethos DevTools: Play Telemetry CSV*).
+3. Pick the CSV, the speed (1×, 2×, 5×, 10×, 20× — `ethos-devtools.telemetryReplaySpeeds`) and
+   *Play once* or *Loop*.
+4. Stop via the notification's cancel button or ⏹️ **Stop Telemetry**.
 
-## Default behavior
+Single values (e.g. force an altitude or RSSI) → ✏️ **Set Telemetry Value**.
 
-Without parameters the script starts immediately with sensible defaults:
+## Which frames are injected
 
-- **Log**: `DemoTelemetry.csv` in the same folder as the script
-- **Target**: `RADIO/sensors.json` at the repository root (auto-detected from any working directory)
-- **Speed**: real-time (`-Speed 1`)
-- **Timing**: computed from CSV timestamps
+Only frames declared in the simulator's `sensors.json`
+(`simulators/X20RS_FCC@26.1.2/sensors.json`, edit via 📡 Open Telemetry). The file currently
+declares RSSI, GPS (Latitude, Longitude, Altitude, Speed, Course, Sats), RxBatt and more; CSV
+columns without a matching frame are ignored. Units in the header are ignored (`Alt(m)` → `Altitude`).
 
-## Deterministic demo logs
+## Log files
 
-For repeatable simulator tests, two generated logs are available next to the replay script:
-
-- `DemoTelemetry_Synthetic_1min_straightLine_250ms.csv`
-	- 240 rows
-	- constant 20 m/s straight-line flight
-	- fixed 250 ms cadence
-
-- `DemoTelemetry_Synthetic_5min_pattern_250ms.csv`
-	- 1200 rows
-	- first minute on a continuous 500 m diameter circle
-	- remaining four minutes with deterministic 20 s direction segments
-	- fixed 250 ms cadence
-
-Both generated logs are intended for reproducible A/B tests in the simulator.
-
-## Terminal output
-
-At startup the script prints a header, then an in-place progress line:
-
-```
-Replay source : ...\DemoTelemetry.csv
-Streaming to  : ...\RADIO/sensors.json
-Rows          : 1234
-Speed         : 1x
-Format        : EdgeTX
-ESC sensor    : False
-Log rate      : ~2 Hz (median dt 500 ms)
-
-Row 42/1234 (3%)  lat=51.36459 lon=11.93512 alt=43.0m hdg=316.5° sats=12
-```
-
-The progress line updates in-place and shows percentage, position, altitude, heading, and satellite count.
-
-## Examples
-
-From the workspace root or the script folder:
-
-```powershell
-# Real-time replay with demo log (recommended for simulator tests)
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -Speed 1 -Loop
-
-# Replay deterministic 1-minute straight line log
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -LogPath ".\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\Synthetic_Logs\DemoTelemetry_Synthetic_1min_straightLine_250ms.csv" -Speed 1 -Loop
-
-# Replay deterministic 5-minute pattern log
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -LogPath ".\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\Synthetic_Logs\DemoTelemetry_Synthetic_5min_pattern_250ms.csv" -Speed 1 -Loop
-
-# Custom log, double speed
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -LogPath ".\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\MyFlight.csv" -Speed 2 -Loop
-
-# EdgeTX log from .vscode, 5x speed
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -LogPath ".\vscode\MyFlight.csv" -Speed 5
-
-# With ESC sensor (useful for multirotor logs)
-.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -Speed 1 -Loop -IncludeEsc
-```
-
-## Parameters
-
-| Parameter | Default | Description |
+| File | Format | Content |
 |---|---|---|
-| `-LogPath` | `DemoTelemetry.csv` | Input CSV |
-| `-SensorsPath` | `RADIO/sensors.json` | Output JSON; relative paths are resolved against the repo root |
-| `-Speed` | `1.0` | Replay speed (`1` = real-time, `2` = double, etc.) |
-| `-Loop` | — | Restart from the beginning after the last frame |
-| `-Format` | `auto` | `auto` / `edgetx` / `generic` — detects format from CSV headers |
-| `-IncludeEsc` | — | Optional ESC sensor (RPM/voltage/current) |
+| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/DemoTelemetry.csv` | EdgeTX | real flight, ~3180 rows, ~2 Hz |
+| `…/Synthetic_Logs/DemoTelemetry_Synthetic_1min_straightLine_250ms.csv` | EdgeTX | 240 rows, constant 20 m/s straight line, 250 ms cadence |
+| `…/Synthetic_Logs/DemoTelemetry_Synthetic_5min_pattern_250ms.csv` | EdgeTX | 1200 rows, 500 m circle for 1 min, then 20 s direction segments, 250 ms cadence |
+
+The synthetic logs are generated by `generate_deterministic_telemetry_line.py` /
+`generate_deterministic_telemetry_pattern.py` in the same folder and are meant for reproducible A/B runs.
+
+Supported CSV formats (Ethos DevTools):
+- **EdgeTX log** — `Date`, `Time`, `GPS` as `"lat lon"`, `Alt(m)`, `RxBt(V)`, `1RSS(dB)`, `RQly(%)`, `GSpd(kmh)`, `Hdg(°)`, `Sats`, …
+- **Ethos log** — `Date`, `Time`, `GPS`, `Altitude(m)`, `RxBatt(V)`, `RSSI 2.4G(dB)`, …
+- Timing comes from `Date` + `Time`; the speed factor divides the inter-row delay.
 
 ## Using your own log
 
-1. Put the CSV next to the replay script or anywhere else in the repo (or pass any path with `-LogPath`)
-2. Let the script auto-detect the format or force `-Format edgetx` / `-Format generic`
+Copy an EdgeTX or Ethos CSV anywhere into the workspace (e.g. next to the demo logs) and pick it in
+📊 Play Telemetry CSV. Keep the frame names in the header matching `sensors.json`.
 
-**EdgeTX format** (auto-detected):
-- Required columns: `Date`, `Time`, `GPS`, `1RSS(dB)`, `RxBt(V)`, `Ptch(rad)`, `Roll(rad)`
-- Timing derived from `Date` + `Time`
+## On the radio
 
-**Generic format**:
-- Required field: `timestamp_ms` (Unix milliseconds)
-- GPS: `lat`, `lon`, `alt_m`, `speed_mps`, `course_deg`, `sats`
+For replay on real hardware use the separate Lua widget
+[ETHOS-Telemetry-Replay](https://github.com/b14ckyy/ETHOS-Telemetry-Replay), which publishes the
+CSV values as Lua sources; the mapping widget reads them in *Telemetry source = Sensors* mode
+(see `DebugTelemetryInput.md`). A copy of it lives in the simulator folder under
+`scripts/TelemetryReplay/` for sim use as well.
 
-## Technical details
+## Legacy
 
-- **Timing**: uses real timestamps from the CSV and waits exactly `delta / Speed` ms between rows. No fixed tick.
-- **Write**: atomic write via temp file + `File.Replace`, so the extension never reads a partial JSON.
-- **Encoding**: UTF-8 without BOM, so `JSON.parse()` in the ETHOS extension works reliably.
-- **Project path**: detects the repo root based on `RADIO/` and `Docs/`.
-
-## Requirements
-
-- ETHOS simulator running (extension `bsongis.ethos`)
-- VS Code Developer: Reload Window after extension patches
-- PowerShell 5.1 (Windows) or pwsh
+`replay-telemetry-log.ps1` (same folder) wrote `RADIO/sensors.json` every few hundred milliseconds
+and relied on a locally patched `bsongis.ethos` 0.1.x to pick the file up. Both mechanisms are gone
+with extension 0.6; the script is kept only as reference for the INAV SmartPort AppID mapping in its
+header and will be removed.

@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build & Deploy [SIM]",
+      "detail": "Stage src/ → build/release, create release ZIP, deploy to the active simulator folder",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/build/Build-Release.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Lua syntax check (luac -p)",
+      "detail": "Compile-check every Lua file under src/",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-Command",
+        "$f = Get-ChildItem -Recurse -Filter *.lua '${workspaceFolder}/src'; $bad = 0; foreach ($x in $f) { luac -p $x.FullName; if ($LASTEXITCODE -ne 0) { $bad++ } }; if ($bad -eq 0) { Write-Host \"OK: $($f.Count) files\" } else { exit 1 }"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+[
+  { "label": "▶️ Start SIM", "command": "ethos.start" },
+  { "label": "🛑 Stop SIM", "command": "ethos.stop" },
+  { "label": "🔄 Reload SIM (stop → deploy scripts → start)", "command": "ethos-devtools.reload" },
+  { "label": "", "separator": true },
+  { "label": "🏗️ Build & Deploy [SIM] (full: scripts + icons + release ZIP)", "task": "Build & Deploy [SIM]" },
+  { "label": "🚀 Deploy scripts only", "command": "ethos-devtools.deploySimulator" },
+  { "label": "", "separator": true },
+  { "label": "🖥️ Open Display", "command": "ethos.openDisplay" },
+  { "label": "🎛️ Open Controls", "command": "ethos.openControls" },
+  { "label": "📡 Open Telemetry", "command": "ethos.openTelemetry" },
+  { "label": "", "separator": true },
+  { "label": "📊 Play Telemetry CSV", "command": "ethos-devtools.playTelemetry" },
+  { "label": "⏹️ Stop Telemetry", "command": "ethos-devtools.stopTelemetry" },
+  { "label": "✏️ Set Telemetry Value", "command": "ethos-devtools.setTelemetry" },
+  { "label": "", "separator": true },
+  { "label": "📻 Deploy to Radio (USB)", "command": "ethos-devtools.deployRadio" },
+  { "label": "📻 Deploy to Radio (Lua only)", "command": "ethos-devtools.deployRadioLua" },
+  { "label": "", "separator": true },
+  { "label": "📖 Open Lua Doc for this release", "command": "ethos.openLuaDoc" },
+  { "label": "🆑 Clear simulators/ethos.log", "command": ["ethos.clearLogfile", "ethos.showMenu"] },
+  { "label": "⚙️ Change SIM", "command": ["ethos.setSimulator", "ethos.showMenu"] }
+]

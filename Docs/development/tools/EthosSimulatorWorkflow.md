@@ -1,183 +1,177 @@
 # ETHOS Simulator Workflow (VS Code)
 
-Goal: Significantly speed up the local test cycle for widget changes (without copying to hardware every time).
+Goal: fast local test cycle for widget changes without copying to hardware every time.
+Performance numbers from the simulator are **not** meaningful — fps, tile I/O, GC and RAM are
+validated on the real radio only.
+
+**Updated 2026-09-29** for `bsongis.ethos` 0.6.x. The pre-0.6 setup (`ethos.root = RADIO`,
+`ethos.firmware`, `ethos.version`, the locally patched `extension.js` for live `sensors.json`
+reload, the PowerShell replay script) is obsolete — see [What changed](#what-changed-vs-the-old-setup).
 
 ---
 
 ## 1) Prerequisites
 
-VS Code extension installed:
-- `bsongis.ethos` (Ethos simulator extension)
+VS Code extensions:
 
-Workspace configuration (already set up):
-- File: `.vscode/settings.json`
-- Current values:
-  - `ethos.server`: `https://ethos.studio1247.com`
-  - `ethos.version`: `nightly26`
-  - `ethos.firmware`: `X20S_FCC`
-  - `ethos.root`: `RADIO`
+| Extension | Purpose |
+|---|---|
+| `bsongis.ethos` (≥ 0.6.2) | The simulator itself: display, controls, telemetry panel, `ethos.injectTelemetry` API |
+| `flyingeek.ethos-devtools` (≥ 0.9.5) | Companion: CSV telemetry playback, single-value injection, deploy to simulator, deploy to radio over USB, log colorizing |
 
-Note:
-- `ethos.root` must point to the folder containing `scripts/` and `bitmaps/`.
-- Keep `ethos.root` workspace-relative (for example `RADIO`).
+Workspace configuration (`.vscode/settings.json`, gitignored, already set up):
 
----
+```json
+"ethos.server": "https://ethos.studio1247.com",
+"ethos.board": "X20RS",
+"ethos.protocol": "FCC",
+"ethos.release": "26.1.2",
+"ethos.simulatorsFolder": "simulators",
+"ethos.logfile": "simulators/ethos.log",
+"ethos-devtools.deploy": { "app": "src/scripts/ethosmaps" }
+```
 
-## 2) Available Ethos Commands
+The simulator's SD card is `simulators/<board>_<protocol>@<release>/` — for this project
+`simulators/X20RS_FCC@26.1.2/`. It contains `scripts/`, `bitmaps/` (incl. the test tiles under
+`bitmaps/ethosmaps/maps/`), `models/`, `radio.bin` and `sensors.json`. The whole `simulators/`
+folder is gitignored. Switching board or release (`Ethos: Set Simulator` / `Add Simulator`) creates
+a **new, empty** folder — copy tiles, models and `sensors.json` over if you need them there.
 
-Via Command Palette (`Ctrl+Shift+P`):
-- `Ethos: Start Ethos`
-- `Ethos: Stop Ethos`
-- `Ethos: Open Display`
-- `Ethos: Open Telemetry`
-- `Ethos: Set firmware`
-- `Ethos: Set root directory`
-
----
-
-## 3) Keybindings (Workspace)
-
-File: `.vscode/keybindings.json`
-
-Active shortcuts:
-- `Ctrl+Alt+S` → Start Simulator
-- `Ctrl+Alt+D` → Open Display
-- `Ctrl+Alt+T` → Open Telemetry
-- `Ctrl+Alt+X` → Stop Simulator
-- `Ctrl+Alt+R` → **Restart Simulator** (`Stop` + `Start`)
-
-Recommendation:
-- After larger Lua changes, always use `Ctrl+Alt+R` for a clean state.
+Available releases on the server for X20RS (2026-09-29): `26.1.2`, `26.1.0`, `nightly26`, `1.6.7`, `1.6.6`, `1.6.5`, `1.6.4`.
 
 ---
 
-## 4) Recommended Test Sequence (fast & reproducible)
+## 2) Entry point: the status bar menu
 
-1. `Ctrl+Alt+R` (Restart)
-2. `Ctrl+Alt+D` (Open Display)
-3. Load the widget and run a fixed test sequence:
-   - Home → Widget (Initial Entry)
+Click the **`X20RS_FCC`** item in the VS Code status bar (bottom right). The quick pick is defined
+in `.vscode/ethos-menu.json` and bundles everything:
+
+| Entry | What it does |
+|---|---|
+| ▶️ Start SIM / 🛑 Stop SIM | `ethos.start` / `ethos.stop` |
+| 🔄 Reload SIM | stop → deploy `src/scripts/ethosmaps` (scripts only) → start |
+| 🏗️ Build & Deploy [SIM] | Task: `build/Build-Release.ps1` — stages `src/`, builds the release ZIP, deploys **scripts + UI icons** to the active simulator folder, removes stale lib files and `.luac` caches |
+| 🚀 Deploy scripts only | `ethos-devtools.deploySimulator` (no icons, no ZIP) |
+| 🖥️ / 🎛️ / 📡 | Open Display / Controls / Telemetry panel |
+| 📊 Play Telemetry CSV | replay a flight log into the running sim (see §5) |
+| ✏️ Set Telemetry Value | inject one sensor value |
+| 📻 Deploy to Radio | copy the app to the X20RS over USB (radio in Ethos Suite or Serial mode) |
+| 📖 Open Lua Doc | Lua reference for the selected release |
+| 🆑 Clear log | truncates `simulators/ethos.log` |
+| ⚙️ Change SIM | select / add a simulator |
+
+All entries are also in the Command Palette under **Ethos** / **Ethos DevTools**.
+There are no workspace keybindings — VS Code does not support `.vscode/keybindings.json`;
+bind `ethos.showMenu` in your user keybindings if you want a shortcut.
+
+---
+
+## 3) Deploy: two paths
+
+- **Scripts only** (`ethos-devtools.deploySimulator`, part of 🔄 Reload): copies
+  `src/scripts/ethosmaps/` → `simulators/…/scripts/ethosmaps/`. Fastest loop for Lua changes.
+- **Full** (`Build & Deploy [SIM]` task or `.\build\Build-Release.ps1`): additionally copies the UI
+  icons from `src/bitmaps/ethosmaps/bitmaps/` and produces `build/ETHOSMappingWidget-<ver>-<hash>.zip`.
+  Use this after icon changes and before a release. `-NoDeploy` skips the simulator,
+  `-SimDir <path>` overrides the target.
+
+`Build-Release.ps1` reads board/protocol/release from `.vscode/settings.json`, so it always deploys to
+the simulator that is active in VS Code.
+
+---
+
+## 4) Recommended test sequence (fast & reproducible)
+
+1. 🔄 Reload SIM (or 🏗️ Build & Deploy, then ▶️ Start)
+2. 🖥️ Open Display
+3. Load the widget and run a fixed sequence:
+   - Home → widget (initial entry)
    - Zoom `+/-`
-   - Provider/MapType switch
-   - 20–30s of normal use
-4. Check logs (PERF + SETTINGS + TILE)
-5. After a code change, repeat from step 1
+   - Provider / map type switch
+   - 20–30 s of normal use (with telemetry playback running, §5)
+4. Check logs (§6)
+5. Repeat from step 1 after each code change
 
-Why:
-- Comparable runs (A/B) only work with the same sequence and a clean restart.
-
----
-
-## 5) Performance Tests (Baseline/Experiments)
-
-For performance experiments:
-- `Enable debug log = ON`
-- `Enable perf profile = ON`
-
-Expected output:
-- A `PERF WINDOW` block as an ASCII table every 5s
-- Plus `SETTINGS`/`TILE`/`TOUCH` events depending on actions
-
-See also:
-- `Docs/development/workstreams/PerformanceExperimentsPlan.md`
-
-Telemetry replay (for repeatable sensor input in simulator):
-- Helper doc: `Docs/development/helper/TelemetryReplay.md`
-- Quick start: `.\Docs\development\tools\ETHOS VSCode Sim Telemetry Injection\replay-telemetry-log.ps1 -Speed 1 -Loop`
-- Deterministic demo logs: `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/Synthetic_Logs/`
-
-### Local extension patch: live `sensors.json` reload (reproducible)
-
-For simulator telemetry injection, the locally installed `bsongis.ethos` extension has a small custom patch so the running simulator notices external updates to `RADIO/sensors.json` without reopening the telemetry panel.
-
-Important clarification:
-- The watched file is `sensors.json` under `ethos.root`.
-- It is **not** `settings.json`.
-
-Patched file (local machine, not repo):
-- `C:\Users\{USERNAME}\.vscode\extensions\bsongis.ethos-0.1.11\out\extension.js`
-
-Official baseline for comparison:
-- Extension package: `bsongis.ethos-0.1.11` from VS Code Marketplace
-- Unmodified file: the shipped `out/extension.js` in that package
-
-#### Re-apply procedure (from official extension)
-
-1. Install/update `bsongis.ethos` from Marketplace.
-2. Close VS Code windows using the extension.
-3. Backup file:
-   - `C:\Users\marcb\.vscode\extensions\bsongis.ethos-0.1.11\out\extension.js`
-4. Re-apply the code changes listed below.
-5. Restart VS Code.
-6. In workspace settings, use:
-   - `ethos.version = nightly26`
-   - `ethos.root = RADIO`     <-- your project folder
-7. Run `Ethos: Stop Ethos` then `Ethos: Start Ethos`.
-
-#### Exact modifications vs official `out/extension.js`
-
-- Added module-level state:
-  - `let sensorsFileMtimeMs = 0;`
-  - `let sensorsInterval;`
-  - `let injectSPortFrameAvailable = false;`
-- In `stopEthos(context)`:
-  - reset `sensorsFileMtimeMs = 0;`
-  - reset `injectSPortFrameAvailable = false;`
-  - `clearInterval(sensorsInterval)` and set `sensorsInterval = undefined`
-- In `startEthos(context, output)` after `Module._start()`:
-  - detect support with `typeof Module['_injectSPortFrame'] === 'function'`
-  - call `loadSensors()` once on startup if no sensors are loaded yet
-  - start a `setInterval(..., 10)` loop that:
-    - resolves `${ethos.root}/sensors.json`
-    - checks the file modification time
-    - reloads the file only when `mtimeMs` increased
-    - injects current sensor frames only when `injectSPortFrame` is exported by the simulator build
-  - if the export is missing, log a clear message that live `sensors.json` replay is disabled for that simulator version
-- In `loadSensors()`:
-  - update `sensorsFileMtimeMs = fs.statSync(sensorsFilePath).mtimeMs || 0;`
-
-Verification checklist:
-- On simulator start with `nightly26`, no assert about `injectSPortFrame` appears.
-- While replay script runs, updated `RADIO/sensors.json` values are reflected live.
-- On `Ethos: Stop Ethos`, no background polling remains active.
-
-Why this patch exists:
-- The replay helper writes `RADIO/sensors.json` continuously.
-- Without the local extension patch, the simulator extension does not reliably pick up those external file changes during runtime.
-- With the patch, telemetry replay works as a live file-driven input path for simulator tests.
-
-Compatibility note:
-- Live telemetry injection requires simulator builds that export `injectSPortFrame`.
-- Confirmed working: `nightly26`.
-- Public `1.6.5` does **not** export `injectSPortFrame`.
-- Policy for this project: use `nightly26` now; in future, telemetry injection is expected to work with ETHOS `1.7+` (once those builds export `injectSPortFrame`).
+Comparable A/B runs need the same sequence and a clean restart.
 
 ---
 
-## 6) Troubleshooting
+## 5) Telemetry playback
 
-### Simulator does not start
-- Open Command Palette and call `Ethos: Start Ethos` directly
-- Check that `ethos.root` points correctly to `RADIO`
-- `Ctrl+Alt+X`, then `Ctrl+Alt+S`
+Requirements: simulator running, and the sensors you need declared in
+`simulators/X20RS_FCC@26.1.2/sensors.json` (edit via 📡 Open Telemetry; the file already contains
+RSSI, GPS, RxBatt, …). Only frames present in `sensors.json` are injected; other CSV columns are ignored.
 
-### Wrong or no scripts in the simulator
-- Check `ethos.root`
-- Must be `.../RADIO`, not the repo root
+1. 📊 **Play Telemetry CSV** → pick a CSV → speed (1×/2×/5×/10×/20×) → Play once / Loop
+2. A progress notification shows row, percentage and injected frame names; cancel there or via
+   ⏹️ Stop Telemetry.
 
-### Display does not open
-- Start `Start Ethos` first, then `Open Display`
+Supported formats: **EdgeTX logs** (`GPS` column as `lat lon`, `Alt(m)`, `RxBt(V)`, `1RSS(dB)`,
+`GSpd(kmh)`, `Hdg(°)`, `Sats`, …) and **Ethos logs**. Our demo logs are EdgeTX format:
 
-### Changes don't seem to be active
-- `Ctrl+Alt+R` (Stop+Start)
-- Then re-open the display
+| File | Content |
+|---|---|
+| `Docs/development/tools/ETHOS VSCode Sim Telemetry Injection/DemoTelemetry.csv` | real flight, ~3180 rows |
+| `…/Synthetic_Logs/DemoTelemetry_Synthetic_1min_straightLine_250ms.csv` | 240 rows, 20 m/s straight line, 250 ms cadence |
+| `…/Synthetic_Logs/DemoTelemetry_Synthetic_5min_pattern_250ms.csv` | 1200 rows, circle + direction segments, 250 ms cadence |
+
+Widget side: set **Telemetry source = ETHOS** (default) — the GPS sensor from `sensors.json` is what
+the widget reads. The *Sensors* mode with user-assigned sources is for the on-radio
+`ETHOS-Telemetry-Replay` Lua widget (see `Docs/development/helper/DebugTelemetryInput.md`).
 
 ---
 
-## 7) When Hardware Testing is Still Required
+## 6) Logs
 
-The simulator is ideal for fast iteration, but hardware remains mandatory for:
-- Real touch latency on radio hardware
-- Actual UI stutter during screen swipes
-- SD I/O behavior and timing spikes
-- Final verification before merge
+| Log | Where | Content |
+|---|---|---|
+| Simulator / ETHOS console | Output panel **Ethos Logs**, and `simulators/ethos.log` (append-only, clear via 🆑) | Lua errors (`SCRIPTS:/ethosmaps/…lua:NN:`), ETHOS system messages, `print()` |
+| Widget debug log | `simulators/X20RS_FCC@26.1.2/scripts/ethosmaps/debug.log` | our `logDebug()` output; needs *Enable debug log* in the widget settings |
+| Perf table | same `debug.log`, `PERF WINDOW` block every 5 s | needs *Enable perf profile* additionally |
+
+Both files are plain text in the workspace, so Claude can read them directly.
+
+---
+
+## 7) Troubleshooting
+
+- **Status bar item missing / "No simulator configured"** → Command Palette `Ethos: Set Simulator`,
+  pick `X20RS_FCC@26.1.2`.
+- **First start downloads ~28 MB** (`X20RS_FCC.js/.wasm`) into the extension's global cache — normal.
+- **Widget not listed in the simulator** → check `simulators/X20RS_FCC@26.1.2/scripts/ethosmaps/main.lua`
+  exists (run 🏗️ Build & Deploy) and the Ethos Logs panel for a Lua error at startup.
+- **No icons (zoom, lock, home)** → only 🚀 scripts-only deploy was used; run 🏗️ Build & Deploy once.
+- **Changes not active** → 🔄 Reload SIM; ETHOS caches compiled `.luac` — the build script removes
+  stale ones in the sim folder.
+- **Telemetry playback does nothing** → simulator must be running; the frame names must exist in
+  `sensors.json`; open 📡 Telemetry once so the extension loads the file.
+- **Old models fail to load after a release bump** → `models/*.bin` in the sim folder were written by
+  the previous ETHOS version; delete them and re-create the test model.
+
+---
+
+## 8) When hardware testing is still required
+
+The simulator is for functional iteration. Hardware (X20RS) is mandatory for:
+- everything performance-related (fps, paint budget, tile I/O, GC, RAM)
+- real touch latency and UI stutter during screen swipes
+- SD-card I/O behaviour and timing spikes
+- MSP over a real SmartPort/CRSF link
+- final verification before a release
+
+📻 **Deploy to Radio** (Ethos DevTools) copies `src/scripts/ethosmaps/` to `RADIO:/scripts/ethosmaps/`
+over USB — UI icons under `/bitmaps/ethosmaps/bitmaps/` still have to be copied manually until the
+icon relocation from `workstreams/SuiteInstallPackaging.md` lands.
+
+---
+
+## What changed vs. the old setup
+
+| Before (bsongis.ethos 0.1.x) | Now (0.6.x) |
+|---|---|
+| `ethos.root = RADIO`, `ethos.firmware = X20S_FCC`, `ethos.version = nightly26` | `ethos.board` / `ethos.protocol` / `ethos.release`; SD card at `simulators/<board>_<protocol>@<release>/` |
+| `RADIO/` folder | moved to `simulators/X20RS_FCC@26.1.2/` (tiles, models, `sensors.json` included) |
+| locally patched `extension.js` polling `sensors.json` | official `ethos.injectTelemetry` API, driven by Ethos DevTools |
+| `replay-telemetry-log.ps1` writing `sensors.json` | 📊 Play Telemetry CSV (same CSV files) |
+| `.vscode/keybindings.json` shortcuts | status bar menu (`.vscode/ethos-menu.json`) |
+| Build script deploys to `RADIO/` | deploys to the active simulator folder from `.vscode/settings.json` |
