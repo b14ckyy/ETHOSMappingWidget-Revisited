@@ -601,6 +601,9 @@ mapStatus.blinkTimer = getTime()
 local bgclock = 0
 local cachedGpsSrcLat = nil
 local cachedGpsSrcLon = nil
+local gpsFilter = nil
+local gpsRejectCount = 0
+local gpsRejectLogTime = 0
 
 local function bgtasks(widget)
   -- Collects telemetry from Ethos sources, derives navigation values, and writes the updated state back into mapStatus.
@@ -678,10 +681,26 @@ local function bgtasks(widget)
   end
 
   if gpsLat ~= nil and gpsLon ~= nil then
-    telemetry.lat = gpsLat
-    telemetry.lon = gpsLon
+    if gpsFilter == nil then gpsFilter = mapLibs.utils.newGpsFilter() end
+    local fLat, fLon, gpsEvent = mapLibs.utils.gpsFilterUpdate(gpsFilter, gpsLat, gpsLon, now)
+    telemetry.lat = fLat
+    telemetry.lon = fLon
+    if gpsEvent ~= nil and gpsEvent ~= "accept" and mapStatus.debugEnabled then
+      if gpsEvent == "confirm" then
+        mapLibs.utils.logDebug("GPS_FILT", fmt("confirmed lat=%.6f lon=%.6f (%d implausible samples dropped)",
+          fLat, fLon, gpsRejectCount), true)
+        gpsRejectCount = 0
+      else
+        gpsRejectCount = gpsRejectCount + 1
+        if now - gpsRejectLogTime >= 200 then
+          gpsRejectLogTime = now
+          mapLibs.utils.logDebug("GPS_FILT", fmt("implausible jump dropped lat=%.6f lon=%.6f (%d so far)",
+            gpsLat, gpsLon, gpsRejectCount), true)
+        end
+      end
+    end
 
-    -- GPS staleness: track whether coordinates actually changed.
+    -- GPS staleness: track whether coordinates actually changed (raw values).
     if gpsLat ~= mapStatus._lastGpsLat or gpsLon ~= mapStatus._lastGpsLon then
       mapStatus._lastGpsLat = gpsLat
       mapStatus._lastGpsLon = gpsLon

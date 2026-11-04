@@ -8,6 +8,7 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ### Added
 - **Ethos Suite install package**: the build generates `ethos_lua_manifest.json` (FrSky Lua package spec V1, key `com.github.b14ckyy.ethosmaps`) and ships two ZIPs — `-suite.zip` for Ethos Suite → Lua Library → Install from local `.zip`, `-sdcard.zip` for manual SD card install. Release notes in the manifest come from this CHANGELOG.
+- **GPS plausibility filter**: positions that are not reachable from the last accepted one at 500 m/s are dropped; a new position (first fix, relocation) is accepted after it stayed consistent for ~3 s. Stops GPS cold-start garbage from throwing the map, trail, tile loader and home position around the world. Works without satellite count, independent of the FC firmware.
 
 ### Changed
 - **UI icons moved** from `/bitmaps/ethosmaps/bitmaps/` to `/scripts/ethosmaps/bitmaps/` (Ethos Suite installs only into the script folder). The old folder is no longer read; map tiles stay in `/bitmaps/ethosmaps/maps/`.

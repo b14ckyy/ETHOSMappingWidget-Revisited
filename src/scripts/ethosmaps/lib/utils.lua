@@ -297,6 +297,51 @@ function utils.getAngleFromLatLon(lat1, lon1, lat2, lon2)
   return (a*180/pi + 360) % 360 -- Returned in degrees.
 end
 
+-- GPS plausibility filter. A GPS that was off for a long time reports positions scattered
+-- across the world before its fix; no satellite count is available for every FC, so jumps
+-- are judged by reachability instead: a new position is accepted when it is reachable from
+-- the last accepted one at GPS_MAX_SPEED_MPS, otherwise it becomes a candidate that must stay
+-- self-consistent for GPS_CONFIRM_CS (also covers the very first fix and real relocations).
+local GPS_MAX_SPEED_MPS = 500
+local GPS_JITTER_M      = 50
+local GPS_MAX_GAP_S     = 10
+local GPS_CONFIRM_CS    = 300
+
+function utils.newGpsFilter()
+  return { lat = nil, lon = nil, t = 0, candLat = nil, candLon = nil, candT = 0, candStart = 0 }
+end
+
+local function gpsReachable(lat1, lon1, t1, lat2, lon2, t2)
+  local dt = (t2 - t1) / 100
+  if dt > GPS_MAX_GAP_S then dt = GPS_MAX_GAP_S elseif dt < 0 then dt = 0 end
+  return utils.haversine(lat1, lon1, lat2, lon2) <= GPS_MAX_SPEED_MPS * dt + GPS_JITTER_M
+end
+
+-- Returns the accepted lat, lon (nil until a first fix is confirmed) and an event:
+-- nil (nothing new), "accept", "reject" (new implausible sample) or "confirm" (candidate adopted).
+function utils.gpsFilterUpdate(f, lat, lon, now)
+  if lat == nil or lon == nil or (lat == 0 and lon == 0) then return f.lat, f.lon, nil end
+  if lat == f.lat and lon == f.lon then return f.lat, f.lon, nil end
+  if f.lat ~= nil and gpsReachable(f.lat, f.lon, f.t, lat, lon, now) then
+    f.lat, f.lon, f.t = lat, lon, now
+    f.candLat = nil
+    return lat, lon, "accept"
+  end
+  local isNew = lat ~= f.candLat or lon ~= f.candLon
+  if isNew then
+    if f.candLat == nil or not gpsReachable(f.candLat, f.candLon, f.candT, lat, lon, now) then
+      f.candStart = now
+    end
+    f.candLat, f.candLon, f.candT = lat, lon, now
+  end
+  if now - f.candStart >= GPS_CONFIRM_CS then
+    f.lat, f.lon, f.t = lat, lon, now
+    f.candLat = nil
+    return lat, lon, "confirm"
+  end
+  return f.lat, f.lon, isNew and "reject" or nil
+end
+
 function utils.updateCog()
   -- Derives course over ground from successive GPS samples and writes the result back into status.telemetry.cog.
   if status.lastLat == nil then

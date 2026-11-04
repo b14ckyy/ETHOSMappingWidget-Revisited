@@ -14,6 +14,7 @@ Common problems and their solutions. If your issue is not listed here, check the
 | Telemetry link not active | Ensure the receiver is bound and telemetry is flowing (check ETHOS telemetry screen) |
 | ETHOS does not see the GPS source | Go to **Model → Telemetry → Sensors** and verify that a GPS sensor is listed |
 | Sensor mode misconfigured | In widget settings, ensure **Telemetry source** is set to `ETHOS` (default). The `Sensors` mode is a debug feature for custom source assignment |
+| GPS still reports implausible positions | After a long power-off, a GPS can report positions scattered across the world before its fix. The widget ignores positions that no aircraft could reach and accepts a position once it has been consistent for about 3 seconds |
 
 > The widget reads GPS data via ETHOS's built-in `GPS` source. If no GPS source exists in the system, the widget will show this overlay indefinitely.
 
