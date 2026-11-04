@@ -168,9 +168,8 @@ MapTilesGuide drops the BMP recommendation for 26.2.
 
 ## 5. Housekeeping
 
-- `msp.lua`, `compute.lua`, `resetLib.lua` lack the GPL header.
+- `resetLib.lua` lacks the GPL header.
 - `main.lua` periodic GC comment is German ("Step B: Periodische Garbage Collection") → English when O4 touches it.
-- MapTiler (PR #49) and the ff0005e tile-I/O change have no CHANGELOG/README/MapTilesGuide entry.
 
 ## 6. Order
 

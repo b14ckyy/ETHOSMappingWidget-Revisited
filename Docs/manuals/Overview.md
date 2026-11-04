@@ -92,6 +92,7 @@ The widget supports multiple map tile providers. Available providers and map typ
 | **Google** | Map, Satellite, Hybrid, Terrain |
 | **ESRI**   | Satellite, Hybrid, Street     |
 | **OSM**    | Street                        |
+| **MapTiler** | Satellite, Hybrid, Street, Outdoor, Topo, Winter, OSM Style |
 
 The widget also supports legacy Yaapu tile folders as a read-only fallback. If you have existing Yaapu tiles, they are detected and used automatically without any file changes.
 
@@ -109,7 +110,7 @@ Open the widget settings through **System → Widgets → ETHOS Mapping Widget**
 
 | Setting           | Description                                      | Default     |
 |-------------------|--------------------------------------------------|-------------|
-| Map provider      | Tile provider (Google, ESRI, OSM)                | Google      |
+| Map provider      | Tile provider (Google, ESRI, OSM, MapTiler)      | Google      |
 | Map type          | Map type for the selected provider               | Satellite   |
 | Map zoom          | Default zoom level on startup                    | 19          |
 | Map zoom max      | Maximum allowed zoom level                       | 20          |

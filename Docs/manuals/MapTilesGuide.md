@@ -9,6 +9,7 @@ This guide covers everything about map tiles: supported providers and formats, f
 | **GOOGLE** | Map, Satellite, Hybrid, Terrain | `z/x/y` | Also falls back to Yaapu Google tiles |
 | **ESRI** | Satellite, Hybrid, Street | `z/y/x` | Note: **y before x** |
 | **OSM** | Street | `z/x/y` | OpenStreetMap |
+| **MAPTILER** | Satellite, Hybrid, Street, Outdoor, Topo, Winter, OSM Style | `z/x/y` | Outdoor, Topo and Winter read well in daylight |
 
 Supported tile formats: **JPG**, **PNG**, **BMP** (24-bit). The widget auto-detects the format per tile.
 
@@ -20,7 +21,7 @@ Supported tile formats: **JPG**, **PNG**, **BMP** (24-bit). The widget auto-dete
 | **Horus (STM32F4)** | X10, X10S, X10S Express, X12S | **JPG** or **BMP** |
 
 - **JPG** — Best balance of speed, quality, and storage. Up to 33% faster than PNG on H7 radios.
-- **BMP** (24-bit) — Zero CPU decode cost, but ~3× larger files. May outperform JPG on older F4 radios where software JPEG decoding is slower. Only practical for smaller map areas.
+- **BMP** (24-bit) — Zero CPU decode cost, but ~3× larger files. May outperform JPG on older F4 radios where software JPEG decoding is slower. Only practical for smaller map areas. **Not displayed on ETHOS 26.2.0-RC7** (reported to FrSky) — use JPG on 26.2 until this is resolved.
 - **PNG** — Slowest decode performance. Existing PNG tiles continue to work, but prefer JPG for new downloads.
 
 ## Folder Structure
@@ -38,14 +39,22 @@ bitmaps/ethosmaps/maps/
 │   ├── Satellite/{z}/{y}/{x}.jpg
 │   ├── Hybrid/{z}/{y}/{x}.jpg
 │   └── Street/{z}/{y}/{x}.jpg
-└── OSM/
-    └── Street/{z}/{x}/{y}.jpg
+├── OSM/
+│   └── Street/{z}/{x}/{y}.jpg
+└── MAPTILER/
+    ├── Satellite/{z}/{x}/{y}.jpg
+    ├── Hybrid/{z}/{x}/{y}.jpg
+    ├── Street/{z}/{x}/{y}.jpg
+    ├── Outdoor/{z}/{x}/{y}.jpg
+    ├── Topo/{z}/{x}/{y}.jpg
+    ├── Winter/{z}/{x}/{y}.jpg
+    └── OSM Style/{z}/{x}/{y}.jpg
 ```
 
 ### Naming Rules (Strict)
 
-- **Provider folders**: UPPERCASE — `GOOGLE`, `ESRI`, `OSM`
-- **Map type folders**: Title Case — `Satellite`, `Hybrid`, `Street`, `Map`, `Terrain`
+- **Provider folders**: UPPERCASE — `GOOGLE`, `ESRI`, `OSM`, `MAPTILER`
+- **Map type folders**: Title Case — `Satellite`, `Hybrid`, `Street`, `Map`, `Terrain`, `Outdoor`, `Topo`, `Winter`, `OSM Style`
 - **Zoom folders**: Plain numbers — `6`, `12`, `17`
 - **Tile files**: Plain numbers — `12345.jpg`
 
@@ -53,7 +62,7 @@ Case matters. `google` or `satellite` will **not** be detected.
 
 ### Coordinate Layout
 
-- **Google / OSM**: `{z}/{x}/{y}.ext` — zoom / column / row
+- **Google / OSM / MapTiler**: `{z}/{x}/{y}.ext` — zoom / column / row
 - **ESRI**: `{z}/{y}/{x}.ext` — zoom / row / column (swapped!)
 
 The [High Resolution Map Generator](https://martinovem.github.io/High-Resolution-Map-Generator/) handles this automatically when you select the correct output target.

@@ -4,9 +4,10 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
-## 2.2.0 (unreleased)
+## 2.2.0 (2026-11-04)
 
 ### Added
+- **MapTiler map provider** (PR #49, MartinovEm): provider *MapTiler*, folder `bitmaps/ethosmaps/maps/MAPTILER/`, map types Satellite, Hybrid, Street, Outdoor, Topo, Winter and OSM Style, `{z}/{x}/{y}` layout like Google.
 - **Ethos Suite install package**: the build generates `ethos_lua_manifest.json` (FrSky Lua package spec V1, key `com.github.b14ckyy.ethosmaps`) and ships two ZIPs — `-suite.zip` for Ethos Suite → Lua Library → Install from local `.zip`, `-sdcard.zip` for manual SD card install. Release notes in the manifest come from this CHANGELOG.
 - **Home set via switch** (#46): new setting *Home set trigger* (MSP arming / Switch). With *Switch*, home is set when the selected switch position becomes active and a GPS position is available — works without a flight controller (e.g. GPS logger setups, #45). MSP arming is ignored in this mode. Switch state at widget start never triggers.
 - **ADS-B Alert (experimental, INAV 10)**: new setting *ADS-B Alert*. Polls INAV's ADS-B warning (`MSP2_ADSB_WARNING_VEHICLE_ICAO`) and shows only the flagged aircraft (heading arrow, callsign, distance, altitude MSL; orange warning / red alert; edge arrow; sound + vibration on rising threat level). Thresholds come from the INAV OSD settings. On INAV < 10 the first request fails and the feature switches itself off for the session. First use of the native MSPv2 path over telemetry.
@@ -38,6 +39,7 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 - **Arrow shadow**: 2-triangle filled chevron, 2px larger than fill wireframe
 - **GPS/zoom overlay font size**: restored to `FONT_STD` (normal) / `FONT_S` (compact) — fixes regression from dead-code cleanup that shrank overlays
 - Trail accumulation moved from paint() drawMap to `mapLib.updateTrail()` in wakeup()
+- **Tile I/O**: one SD open per tile (`pcall(lcd.loadBitmap)` instead of `fileExists()` + load), tile format detected once and reused, adaptive time-budgeted loading (30 ms per wakeup after zoom, 10 ms while panning). Measured load time per tile 19.7 → 1.2 ms
 - Home and observation marker tile-pixel pre-computed in `computeTileGrid()`
 - Inline outCode closure in `clipLine()` to save ~1500 VM opcodes/frame
 - Bootstrap `updateTileGrid` skips frame instead of running in paint()

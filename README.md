@@ -20,7 +20,7 @@ https://www.youtube.com/watch?v=QHtjaexGUEo
 ## Features
 
 - **Moving map** — real-time UAV position with heading, home marker, home arrow, trail history and scale bar
-- **Multiple map providers** — Google, ESRI, OSM with various map types (Satellite, Hybrid, Street, Terrain)
+- **Multiple map providers** — Google, ESRI, OSM, MapTiler with various map types (Satellite, Hybrid, Street, Terrain, Topo, Outdoor, Winter)
 - **Touch zoom** — on-screen +/- buttons or hardware keys
 - **Map panning** — drag to scroll, observation marker, detached mode ([details](Docs/manuals/PanningAndMarker.md))
 - **INAV waypoint missions** — automatic MSP download, path overlay, active WP tracking via SmartPort or CRSF/ELRS ([details](Docs/manuals/WaypointMission.md))
