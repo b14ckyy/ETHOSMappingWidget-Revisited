@@ -1,4 +1,4 @@
-# Migration Guide: 1.x → 2.0 → 2.1
+# Migration Guide: 1.x → 2.0 → 2.1 → 2.2
 
 This guide covers what changed between version 1.x and 2.0 and what you need to do when upgrading.
 
@@ -114,11 +114,31 @@ Version 2.1 stores volatile runtime state (zoom level, observation marker positi
 - **Performance overhaul** — heavy computation moved from rendering to a background scheduler, resulting in stable frame rates even with 60+ waypoints
 - **Smarter MSP connection** — error retries skip redundant FC re-identification when the flight controller is already known
 
+---
+
+## 2.1 → 2.2 Changes
+
+### Quick Summary
+
+| Area | Change | Action Required |
+|------|--------|-----------------|
+| Install | Release ships as `-suite.zip` (Ethos Suite → Lua Library) and `-sdcard.zip` (manual) | Use either one |
+| UI icons | Moved from `bitmaps/ethosmaps/bitmaps/` to `scripts/ethosmaps/bitmaps/` | **Optional:** delete the old `bitmaps/ethosmaps/bitmaps/` folder |
+| Map tiles | Unchanged, still under `bitmaps/ethosmaps/maps/` | **None** |
+| Settings | Preserved | **None** |
+
+### Why the Icons Moved
+
+Ethos Suite can only install files into the widget's own script folder (`SCRIPTS:/ethosmaps/`).
+The widget now loads its icons from `scripts/ethosmaps/bitmaps/`. The old
+`bitmaps/ethosmaps/bitmaps/` folder is no longer read; it is harmless and can be deleted.
+Do **not** delete `bitmaps/ethosmaps/maps/` — that is where your map tiles live.
+
 ## Updating
 
-1. Download the latest release ZIP from [GitHub Releases](https://github.com/b14ckyy/ETHOSMappingWidget-Revisited/releases)
-2. Extract to the SD card root — existing files are overwritten
+1. Download the latest release from [GitHub Releases](https://github.com/b14ckyy/ETHOSMappingWidget-Revisited/releases)
+2. Install the `-suite.zip` with Ethos Suite, or extract the `-sdcard.zip` to the SD card root
 3. Reboot the radio
-4. Re-configure widget settings
+4. After a major version change (1.x → 2.x), re-configure widget settings
 
 See [Installation Guide](Installation.md) for full instructions.

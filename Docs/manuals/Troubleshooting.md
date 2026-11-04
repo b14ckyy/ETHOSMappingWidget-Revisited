@@ -160,6 +160,16 @@ Re-assign the sensors in widget settings under the **Top Bar** section.
 
 ---
 
+## Zoom / Lock / Pin Buttons or Loading Placeholder Missing
+
+The UI icons are part of the widget package and live in `scripts/ethosmaps/bitmaps/`.
+
+- **Ethos Suite install:** reinstall the `-suite.zip`.
+- **Manual install:** make sure `scripts/ethosmaps/bitmaps/` exists and contains the PNG files from the `-sdcard.zip`.
+- Since 2.2 the old folder `bitmaps/ethosmaps/bitmaps/` is no longer used — icons copied there are ignored.
+
+---
+
 ## Still Stuck?
 
 1. **Enable the debug log** in widget settings to get detailed diagnostic output

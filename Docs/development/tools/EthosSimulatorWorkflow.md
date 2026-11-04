@@ -49,9 +49,9 @@ in `.vscode/ethos-menu.json` and bundles everything:
 | Entry | What it does |
 |---|---|
 | ▶️ Start SIM / 🛑 Stop SIM | `ethos.start` / `ethos.stop` |
-| 🔄 Reload SIM | stop → deploy `src/scripts/ethosmaps` (scripts only) → start |
-| 🏗️ Build & Deploy [SIM] | Task: `build/Build-Release.ps1` — stages `src/`, builds the release ZIP, deploys **scripts + UI icons** to the active simulator folder, removes stale lib files and `.luac` caches |
-| 🚀 Deploy scripts only | `ethos-devtools.deploySimulator` (no icons, no ZIP) |
+| 🔄 Reload SIM | stop → deploy `src/scripts/ethosmaps` (scripts + icons) → start |
+| 🏗️ Build & Deploy [SIM] | Task: `build/Build-Release.ps1` — stages `src/`, generates the manifest, builds both release ZIPs, deploys to the active simulator folder, removes stale files and `.luac` caches |
+| 🚀 Deploy scripts only | `ethos-devtools.deploySimulator` (copies `src/scripts/ethosmaps`, no manifest, no ZIP) |
 | 🖥️ / 🎛️ / 📡 | Open Display / Controls / Telemetry panel |
 | 📊 Play Telemetry CSV | replay a flight log into the running sim (see §5) |
 | ✏️ Set Telemetry Value | inject one sensor value |
@@ -69,11 +69,14 @@ bind `ethos.showMenu` in your user keybindings if you want a shortcut.
 ## 3) Deploy: two paths
 
 - **Scripts only** (`ethos-devtools.deploySimulator`, part of 🔄 Reload): copies
-  `src/scripts/ethosmaps/` → `simulators/…/scripts/ethosmaps/`. Fastest loop for Lua changes.
-- **Full** (`Build & Deploy [SIM]` task or `.\build\Build-Release.ps1`): additionally copies the UI
-  icons from `src/bitmaps/ethosmaps/bitmaps/` and produces `build/ETHOSMappingWidget-<ver>-<hash>.zip`.
-  Use this after icon changes and before a release. `-NoDeploy` skips the simulator,
-  `-SimDir <path>` overrides the target.
+  `src/scripts/ethosmaps/` (Lua, audio, UI icons) → `simulators/…/scripts/ethosmaps/`. Fastest loop.
+  Does not remove files that were deleted in `src/`.
+- **Full** (`Build & Deploy [SIM]` task or `.\build\Build-Release.ps1`): stages the package, writes
+  `ethos_lua_manifest.json`, produces `build/ETHOSMappingWidget-<ver>-<hash>-suite.zip` and
+  `-sdcard.zip`, validates the Suite ZIP against the package spec and mirrors the staged folder into
+  the simulator (stale files and `.luac` caches removed). Fails if `WIDGET_VERSION` is not `x.y.z`
+  or `CHANGELOG.md` has no `## x.y.z` section (manifest release notes). `-NoDeploy` skips the
+  simulator, `-SimDir <path>` overrides the target.
 
 `Build-Release.ps1` reads board/protocol/release from `.vscode/settings.json`, so it always deploys to
 the simulator that is active in VS Code.
@@ -159,9 +162,9 @@ The simulator is for functional iteration. Hardware (X20RS) is mandatory for:
 - MSP over a real SmartPort/CRSF link
 - final verification before a release
 
-📻 **Deploy to Radio** (Ethos DevTools) copies `src/scripts/ethosmaps/` to `RADIO:/scripts/ethosmaps/`
-over USB — UI icons under `/bitmaps/ethosmaps/bitmaps/` still have to be copied manually until the
-icon relocation from `workstreams/SuiteInstallPackaging.md` lands.
+📻 **Deploy to Radio** (Ethos DevTools) copies `src/scripts/ethosmaps/` (including the UI icons) to
+`RADIO:/scripts/ethosmaps/` over USB. To test the real install path, install the `-suite.zip` with
+Ethos Suite instead.
 
 ---
 

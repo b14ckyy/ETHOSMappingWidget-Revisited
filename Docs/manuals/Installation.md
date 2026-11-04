@@ -2,55 +2,64 @@
 
 > **Minimum requirement**: ETHOS 1.6 or newer.
 
-## What You Need
+Each release comes as two ZIPs with the same content:
 
-- A FrSky radio running ETHOS 1.6+
-- The widget release ZIP (`ETHOSMappingWidget-<version>.zip`)
-- A way to access the radio's SD card (USB cable or SD card reader)
+| ZIP | Use it for |
+|---|---|
+| `ETHOSMappingWidget-<version>-<hash>-suite.zip` | **Ethos Suite** (recommended) |
+| `ETHOSMappingWidget-<version>-<hash>-sdcard.zip` | Manual install by copying to the SD card |
 
-## Steps
+## Option A: Install with Ethos Suite (recommended)
+
+1. Connect the radio to the computer via USB and start **Ethos Suite**.
+2. Open **Lua Library → Install from local `.zip`** and select the `-suite.zip`.
+3. The Suite installs the widget to `SCRIPTS:/ethosmaps/` and records name, version and file list.
+4. Disconnect and **reboot the radio**.
+
+Updating works the same way: install the newer `-suite.zip`. The Suite replaces the widget files
+and keeps your widget settings and `state.dat` (zoom level, observation marker, default position).
+
+## Option B: Install manually on the SD card
 
 1. **Connect your radio** to the computer via USB, or remove the SD card and insert it into a card reader.
-
-2. **Extract the ZIP** to the root of the SD card. The ZIP already contains the correct folder structure — no renaming or rearranging needed.
-
-3. **Verify** that the files land in the right places. Your SD card should look like this:
+2. **Extract the `-sdcard.zip`** to the root of the SD card. The ZIP already contains the correct folder structure.
+3. **Verify** that the files land in the right places:
 
 ```
 SD Card (root)
-├── bitmaps/
-│   └── ethosmaps/
-│       └── bitmaps/
-│           ├── flockoff.png
-│           ├── flockon.png
-│           ├── gpsicon.png
-│           ├── loading.png
-│           ├── minihomeorange.png
-│           ├── nogpsicon.png
-│           ├── nomap.png
-│           ├── pinbutton.png
-│           ├── zoom_minus.png
-│           └── zoom_plus.png
-├── scripts/
-│   └── ethosmaps/
-│       ├── main.lua
-│       ├── audio/
-│       │   ├── err.wav
-│       │   └── inf.wav
-│       └── lib/
-│           ├── compute.lua
-│           ├── drawlib.lua
-│           ├── layout_default.lua
-│           ├── maplib.lua
-│           ├── msp.lua
-│           ├── resetLib.lua
-│           ├── tileloader.lua
-│           └── utils.lua
+└── scripts/
+    └── ethosmaps/
+        ├── main.lua
+        ├── ethos_lua_manifest.json
+        ├── audio/
+        │   ├── err.wav
+        │   └── inf.wav
+        ├── bitmaps/
+        │   ├── flockoff.png
+        │   ├── flockon.png
+        │   ├── gpsicon.png
+        │   ├── loading.png
+        │   ├── minihomeorange.png
+        │   ├── nogpsicon.png
+        │   ├── nomap.png
+        │   ├── pinbutton.png
+        │   ├── zoom_minus.png
+        │   └── zoom_plus.png
+        └── lib/
+            ├── compute.lua
+            ├── drawlib.lua
+            ├── layout_default.lua
+            ├── maplib.lua
+            ├── msp.lua
+            ├── resetLib.lua
+            ├── tileloader.lua
+            └── utils.lua
 ```
 
 4. **Safely eject** the SD card or disconnect USB.
-
 5. **Reboot the radio** to pick up the new widget.
+
+To update, repeat the steps; the ZIP overwrites the existing files.
 
 ## Adding the Widget
 
@@ -69,17 +78,17 @@ The widget does **not** include map tiles. You need to prepare them separately:
    bitmaps/ethosmaps/maps/<MapProvider>/
    ```
 
-Without map tiles, the widget will display a "NO MAP DATA" placeholder where tiles are missing.
+Map tiles are user data: neither ZIP contains them and neither install path touches them.
+Without map tiles, the widget displays a "NO MAP DATA" placeholder where tiles are missing.
 
-## Updating
+## Settings Across Updates
 
-To update to a newer version, repeat steps 1–5. The ZIP will overwrite the existing files. Your widget settings (configured on the radio) will be reset between major releases (1.x --> 2.x) but preserved between minor releases (2.0 --> 2.1).
+Widget settings are reset between major releases (1.x → 2.x) and preserved between minor releases (2.0 → 2.1 → 2.2).
 
 ## Uninstalling
 
-Delete these two folders from the SD card:
+- **Ethos Suite:** remove the widget in the Lua Library, or
+- **Manually:** delete `scripts/ethosmaps/` from the SD card.
 
-- `bitmaps/ethosmaps/`
-- `scripts/ethosmaps/`
-
-Then remove the widget from any screens where it was added.
+Map tiles under `bitmaps/ethosmaps/maps/` stay until you delete them. Then remove the widget from
+any screens where it was added.

@@ -146,12 +146,12 @@ local function ensureNoMapBitmap()
     return noMapBitmap
   end
 
-  if fileExists("/bitmaps/ethosmaps/bitmaps/nomap.png") then
-    noMapBitmap = lcd.loadBitmap("/bitmaps/ethosmaps/bitmaps/nomap.png")
+  if fileExists("/scripts/ethosmaps/bitmaps/nomap.png") then
+    noMapBitmap = lcd.loadBitmap("/scripts/ethosmaps/bitmaps/nomap.png")
   elseif fileExists("/bitmaps/ethosmaps/maps/notiles.png") then
     noMapBitmap = lcd.loadBitmap("/bitmaps/ethosmaps/maps/notiles.png")
   else
-    noMapBitmap = lcd.loadBitmap("/bitmaps/ethosmaps/bitmaps/nomap.png")
+    noMapBitmap = lcd.loadBitmap("/scripts/ethosmaps/bitmaps/nomap.png")
   end
 
   return noMapBitmap
@@ -163,8 +163,8 @@ local function ensureLoadingBitmap()
     return loadingBitmap
   end
 
-  if fileExists("/bitmaps/ethosmaps/bitmaps/loading.png") then
-    loadingBitmap = lcd.loadBitmap("/bitmaps/ethosmaps/bitmaps/loading.png")
+  if fileExists("/scripts/ethosmaps/bitmaps/loading.png") then
+    loadingBitmap = lcd.loadBitmap("/scripts/ethosmaps/bitmaps/loading.png")
   else
     loadingBitmap = ensureNoMapBitmap()
   end
