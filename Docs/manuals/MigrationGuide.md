@@ -6,7 +6,6 @@ This guide covers what changed between version 1.x and 2.0 and what you need to 
 
 | Area | Change | Action Required |
 |------|--------|-----------------|
-| Folder structure | `RADIO/` renamed to `src/` in the repository | **None** — the release ZIP still extracts to the correct SD card paths |
 | Tile folders | Native EthosMaps path is now the primary format | **Only if** you had custom (non-Yaapu) tile folders in a non-standard layout |
 | Settings | Settings key may be reset between major versions | Re-configure widget settings after update |
 | MSP stack | Complete rewrite with native V1/V2 support | **None** — transparent improvement |

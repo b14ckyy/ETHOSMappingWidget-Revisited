@@ -28,7 +28,7 @@ You can verify it in **System → Hardware → LCD** on your radio.
 
 ## Installation
 
-1. Download `CustomLayouts.zip` from the release.
+1. Download `LAYOUTS.zip` from the [release page](https://github.com/b14ckyy/ETHOSMappingWidget-Revisited/releases).
 2. Pick the folder that matches your radio's screen resolution
    (e.g. `800x480`).
 3. Copy the **`scripts`** folder from inside that resolution folder to the

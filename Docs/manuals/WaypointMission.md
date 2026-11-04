@@ -10,7 +10,7 @@ The widget can automatically download and display INAV waypoint missions from yo
 - SmartPort (FrSky ACCESS / ACCST / TD) **or** CRSF (Crossfire / ELRS) telemetry link
 - "Waypoint download (INAV)" enabled in widget settings (default: on)
 
-> **Note**: SmartPort is fully tested. CRSF/ELRS support is experimental. Please report Issues in GH Tickets.
+> Both transports are supported: SmartPort and CRSF (Crossfire / ELRS). Please report issues as GitHub tickets.
 
 ## How It Works
 
@@ -33,10 +33,10 @@ The following INAV waypoint actions are supported and displayed on the map:
 | WAYPOINT       | Fly to coordinate                | Circle with number  |
 | POSHOLD_TIME   | Loiter at position for N seconds | Circle + duration   |
 | LAND           | Landing position                 | Circle + "L" label  |
-| RTH            | Return to home                   | Dashed line to home |
-| JUMP           | Jump to another waypoint index   | Arrow to target     |
-| SET_HEAD       | Set heading direction            | Direction chevron   |
-| SET_POI        | Point of interest (camera aim)   | Position marker     |
+| RTH            | Return to home                   | Dotted line from the last waypoint to home |
+| JUMP           | Jump to another waypoint index   | Dotted yellow line with arrow to the target, repeat count (`x3`, `∞`) |
+| SET_HEAD       | Set heading direction            | Chevron at the preceding waypoint |
+| SET_POI        | Point of interest (camera aim)   | Marker with yellow ring and "POI" label |
 
 ## Map Display
 
@@ -63,6 +63,9 @@ The UAV symbol on the map changes color based on the current flight mode:
 | HOLD     | Green  | Holding position at waypoint     |
 | RTH      | Orange | Returning to home                |
 | Idle     | White  | No active navigation             |
+
+Red overrides all of these when GPS telemetry is lost (no position update for 5 seconds).
+Arming state is polled every 5 seconds, navigation status every 2 seconds while armed.
 
 ## Widget Settings
 

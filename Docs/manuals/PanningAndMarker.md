@@ -15,7 +15,7 @@ By default, the map is locked to follow the UAV position (follow-lock). When pan
 | Gesture       | Action                                        |
 |---------------|-----------------------------------------------|
 | Touch & drag  | Pan the map in any direction                  |
-| Tap (no drag) | No action (touch released without movement)   |
+| Tap (no drag) | No map action (passed on to ETHOS)            |
 | Release       | Map stays briefly, then re-centers on UAV     |
 
 After releasing the touch, the map holds its position for about 5 seconds before automatically re-centering on the UAV.
@@ -70,7 +70,9 @@ The panning and marker controls are rendered as overlay buttons in fullscreen mo
 |--------|------------------------------|-----------------------------------|
 | Lock   | Fullscreen + panning enabled  | Toggle follow-lock on/off        |
 | Pin    | Unlocked + panning enabled    | Place/remove observation marker  |
-| Zoom + | Always visible                | Increase map zoom level          |
-| Zoom - | Always visible                | Decrease map zoom level          |
+| Zoom + | Unless zoom is RC-controlled  | Increase map zoom level          |
+| Zoom - | Unless zoom is RC-controlled  | Decrease map zoom level          |
+
+The lock button sits at the right edge (middle), the pin button above it at the right edge.
 
 > **Note**: The pin button is only available when the map is **unlocked** (detached mode). This ensures you are panning to the desired position before placing the marker.

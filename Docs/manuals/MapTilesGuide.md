@@ -7,6 +7,7 @@ This guide covers everything about map tiles: supported providers and formats, f
 | Provider | Map Types | Coordinate Layout | Notes |
 |----------|-----------|-------------------|-------|
 | **GOOGLE** | Map, Satellite, Hybrid, Terrain | `z/x/y` | Also falls back to Yaapu Google tiles |
+| **GMapCatcher (Yaapu)** | Satellite, Hybrid, Map, Terrain | GMapCatcher | Reads existing Yaapu/GMapCatcher folders directly, see below |
 | **ESRI** | Satellite, Hybrid, Street | `z/y/x` | Note: **y before x** |
 | **OSM** | Street | `z/x/y` | OpenStreetMap |
 | **MAPTILER** | Satellite, Hybrid, Street, Outdoor, Topo, Winter, OSM Style | `z/x/y` | Outdoor, Topo and Winter read well in daylight |
@@ -92,15 +93,16 @@ bitmaps/yaapu/maps/
 └── GoogleTerrainMap/{z}/{y}/s_{x}.jpg
 ```
 
-**Yaapu GMapCatcher (auto-detected):**
+**GMapCatcher (separate provider "GMapCatcher (Yaapu)" in the settings):**
 ```
 bitmaps/yaapu/maps/
-├── sat_tiles/...
-├── map_tiles/...
-└── ter_tiles/...
+├── sat_tiles/...   (Satellite)
+├── tiles/...       (Map / Hybrid)
+└── ter_tiles/...   (Terrain)
 ```
 
-> Yaapu fallback only applies to the **Google** provider. ESRI and OSM are native EthosMaps only.
+> The automatic fallback applies to the **Google** provider only. GMapCatcher tiles are selected
+> as their own provider. ESRI, OSM and MapTiler are native EthosMaps folders only.
 
 ### Common Scenarios
 

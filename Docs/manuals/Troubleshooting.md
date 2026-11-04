@@ -78,10 +78,12 @@ The widget requires a minimum size of **200 × 100 pixels**. Resize the widget a
 
 **Briefly shown when tapping + or − at the zoom boundary.**
 
-This is informational — you've reached the configured zoom min or max. Adjust the zoom range in widget settings if needed:
+This is informational — you've reached the zoom min or max. The effective range is the configured
+range narrowed to the zoom levels present in your tile folders. Adjust if needed:
 
 - **Map zoom min** — lower zoom limit
 - **Map zoom max** — upper zoom limit
+- Download tiles for further zoom levels to extend the available range
 
 ---
 
@@ -91,9 +93,9 @@ This is informational — you've reached the configured zoom min or max. Adjust 
 
 This means the widget found no tile folders matching any known provider. Ensure:
 
-1. Tile folders exist at `bitmaps/ethosmaps/maps/GOOGLE/`, `bitmaps/ethosmaps/maps/ESRI/`, or `bitmaps/ethosmaps/maps/OSM/`
+1. Tile folders exist at `bitmaps/ethosmaps/maps/GOOGLE/`, `…/ESRI/`, `…/OSM/` or `…/MAPTILER/` (or Yaapu folders under `bitmaps/yaapu/maps/`)
 2. Provider folder names are **UPPERCASE** (`GOOGLE`, not `google`)
-3. Map type folder names use **Title Case** (`Satellite`, `Hybrid`, `Street`, `Map`, `Terrain`)
+3. Map type folder names use **Title Case** (`Satellite`, `Hybrid`, `Street`, `Map`, `Terrain`, `Outdoor`, `Topo`, `Winter`, `OSM Style`)
 
 The widget auto-detects available providers on startup. If folders are added later, restart the radio or re-enter the widget settings.
 
@@ -133,9 +135,9 @@ The widget automatically detects Yaapu tiles in `bitmaps/yaapu/maps/`. This only
 2. In widget settings, select **Google** as the provider
 3. Scripts and tiles are on the **same drive**
 
-For GMapCatcher-style folders (`sat_tiles/`, `map_tiles/`, `ter_tiles/`), the same auto-detection applies.
+For GMapCatcher-style folders (`sat_tiles/`, `tiles/`, `ter_tiles/`), select the provider **GMapCatcher (Yaapu)** instead of Google.
 
-> Yaapu fallback only works for Google. ESRI and OSM tiles must be in the native `bitmaps/ethosmaps/maps/` structure.
+> The automatic Yaapu fallback only works for Google. ESRI, OSM and MapTiler tiles must be in the native `bitmaps/ethosmaps/maps/` structure.
 
 ---
 
@@ -160,7 +162,7 @@ The assigned ETHOS source is not available or not returning data. This can happe
 - The selected sensor name doesn't match any discovered source
 - The source was renamed or removed in ETHOS
 
-Re-assign the sensors in widget settings under the **Top Bar** section.
+Re-assign the sensors in widget settings (*Link quality source*, *User sensor 1–3*).
 
 ---
 

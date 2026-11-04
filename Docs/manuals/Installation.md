@@ -64,9 +64,9 @@ To update, repeat the steps; the ZIP overwrites the existing files.
 
 ## Adding the Widget
 
-1. Go to **System → Widgets** on your radio.
+1. Open the screen configuration of your model (on ETHOS 26.x: press **DISP** and use the widget manager; see the ETHOS documentation on widgets for your version).
 2. Create or open a screen where you want the widget.
-3. Select the **ETHOS Maps** widget from the list.
+3. Select **ETHOS Mapping Widget** from the widget list.
 4. The widget works best in **fullscreen** mode (touch panning requires it).
 
 ## Map Tiles
