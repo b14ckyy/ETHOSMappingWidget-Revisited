@@ -4,7 +4,7 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
-## Unreleased
+## 2.2.0 (unreleased)
 
 ### Added
 - **Ethos Suite install package**: the build generates `ethos_lua_manifest.json` (FrSky Lua package spec V1, key `com.github.b14ckyy.ethosmaps`) and ships two ZIPs — `-suite.zip` for Ethos Suite → Lua Library → Install from local `.zip`, `-sdcard.zip` for manual SD card install. Release notes in the manifest come from this CHANGELOG.

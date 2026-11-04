@@ -125,7 +125,7 @@ Version 2.1 stores volatile runtime state (zoom level, observation marker positi
 | Install | Release ships as `-suite.zip` (Ethos Suite → Lua Library) and `-sdcard.zip` (manual) | Use either one |
 | UI icons | Moved from `bitmaps/ethosmaps/bitmaps/` to `scripts/ethosmaps/bitmaps/` | **Optional:** delete the old `bitmaps/ethosmaps/bitmaps/` folder |
 | Map tiles | Unchanged, still under `bitmaps/ethosmaps/maps/` | **None** |
-| Settings | Preserved | **None** |
+| Settings | Preserved; the new settings *Home set trigger* / *Home set switch* and *ADS-B Alert* start with their defaults (MSP arming, off) | **None** |
 
 ### Why the Icons Moved
 
@@ -133,6 +133,14 @@ Ethos Suite can only install files into the widget's own script folder (`SCRIPTS
 The widget now loads its icons from `scripts/ethosmaps/bitmaps/`. The old
 `bitmaps/ethosmaps/bitmaps/` folder is no longer read; it is harmless and can be deleted.
 Do **not** delete `bitmaps/ethosmaps/maps/` — that is where your map tiles live.
+
+### New in 2.2
+
+- **Ethos Suite install** — install and update through Lua Library → Install from local `.zip`
+- **Home set via switch** — set home with your arming switch, also without a flight controller
+- **GPS plausibility filter** — GPS cold-start garbage positions no longer throw the map around the world
+- **ADS-B Alert (experimental, INAV 10)** — shows the aircraft INAV warns about
+- **Fixed:** "ZOOM LIMIT" shown permanently and bar values not refreshing (timer overflow)
 
 ## Updating
 
