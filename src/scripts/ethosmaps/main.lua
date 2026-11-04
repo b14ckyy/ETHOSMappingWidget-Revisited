@@ -129,6 +129,7 @@ local mapStatus = {
     wpDownload = false,  -- Enable/disable INAV waypoint download and display
     homeSource = 1,      -- 1 = MSP arming (INAV), 2 = switch
     homeSwitch = nil,    -- Switch source that sets home on its rising edge (homeSource = 2)
+    adsbEnabled = false, -- Experimental: INAV 10 ADS-B threat contact via MSP
     -- Layout selection persisted for future layout variants.
     layout = 1,
   },
@@ -241,6 +242,7 @@ local mapStatus = {
     warningYellow = lcd.RGB(255, 220, 0),
     labelGray = lcd.RGB(170,170,170),
     observationGreen = lcd.RGB(0, 200, 0),
+    adsbWarning = lcd.RGB(255, 140, 0),
     semiBlack45 = lcd.RGB(0, 0, 0, 0.45),
     semiBlack60 = lcd.RGB(0, 0, 0, 0.6),
     loadingOverlay = lcd.RGB(20, 20, 20),
@@ -467,6 +469,7 @@ local mapLibs = {
   compute    = nil,
   utils      = nil,
   msp        = nil,
+  adsb       = nil,
 }
 
 local function markMapDirty()
@@ -497,6 +500,7 @@ local function initLibs()
   if mapLibs.mapLib == nil then mapLibs.mapLib = loadLib("maplib") end
   if mapLibs.compute == nil then mapLibs.compute = loadLib("compute") end
   if mapLibs.msp == nil then mapLibs.msp = loadLib("msp") end
+  if mapLibs.adsb == nil then mapLibs.adsb = loadLib("adsb") end
 end
 
 local function checkSize(widget)
@@ -528,9 +532,18 @@ local function checkSize(widget)
   return true
 end
 
+local function applyAdsbSetting()
+  -- Enables/disables ADS-B polling and registers it as MSP idle-time client.
+  if not (mapLibs and mapLibs.adsb and mapLibs.msp) then return end
+  local on = mapStatus.flagEnabled(mapStatus.conf.adsbEnabled)
+  mapLibs.adsb.setEnabled(on)
+  mapLibs.msp.setClient(on and mapLibs.adsb or nil)
+end
+
 local function createOnce(widget)
   -- Marks a widget instance as ready for background processing after the first valid lifecycle callback.
   widget.runBgTasks = true
+  applyAdsbSetting()
 
   -- Start MSP here (not in create()) because ETHOS calls create() BEFORE read().
   -- In create(), mapStatus.conf.wpDownload is still at its default (false), so
@@ -2699,6 +2712,15 @@ local function configure(widget)
     end
   )
 
+  line = form.addLine("ADS-B Alert (experimental, INAV 10)")
+  form.addBooleanField(line, nil,
+    function() return mapStatus.flagEnabled(mapStatus.conf.adsbEnabled) end,
+    function(value)
+      mapStatus.conf.adsbEnabled = value == true
+      applyAdsbSetting()
+    end
+  )
+
   line = form.addLine("Home set trigger")
   form.addChoiceField(line, form.getFieldSlots(line)[0],
     {{"MSP arming (INAV)", 1}, {"Switch", 2}},
@@ -2972,6 +2994,7 @@ local function read(widget)
   mapStatus.conf.wpDownload = storageToConfig("wpDownload", true)
   mapStatus.conf.homeSource = storageToConfig("homeSource", 1)
   mapStatus.conf.homeSwitch = storageToConfig("homeSwitch", nil)
+  mapStatus.conf.adsbEnabled = storageToConfig("adsbEnabled", false)
 
   -- Restore runtime state from file (observation marker, default position, zoom level).
   local state = readStateFile()
@@ -3024,6 +3047,7 @@ local function write(widget)
   storage.write("wpDownload", mapStatus.conf.wpDownload == true)
   storage.write("homeSource", mapStatus.conf.homeSource)
   storage.write("homeSwitch", mapStatus.conf.homeSwitch)
+  storage.write("adsbEnabled", mapStatus.conf.adsbEnabled == true)
 
   -- Persist runtime state (observation, default position, zoom) to file
   writeStateFile()

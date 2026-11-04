@@ -1628,6 +1628,25 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
       end
     end
   end
+
+  -- ADS-B threat contact (experimental): heading arrow + label, edge arrow when off-screen
+  local adsbDrawX, adsbDrawY
+  local adsbRes = libs.compute and libs.compute.getResults().adsb
+  if adsbRes and adsbRes.tpx and myScreenX ~= nil and uav_tile_x ~= nil then
+    local ax = myScreenX + adsbRes.tpx - uav_tile_x * TILES_SIZE - uav_offset_x + renderOffsetX
+    local ay = myScreenY + adsbRes.tpy - uav_tile_y * TILES_SIZE - uav_offset_y + renderOffsetY
+    local ar = floor(vehicleR * 0.7)
+    if libs.drawLib.computeOutCode(ax, ay, x + ar, y + ar, x + w - ar, y + h - ar) == 0 then
+      local adsbColor = adsbRes.alert and status.colors.red or status.colors.adsbWarning
+      libs.drawLib.drawRArrow(ax, ay, ar + 2, adsbRes.heading, BLACK)
+      libs.drawLib.drawRArrow(ax, ay, ar, adsbRes.heading, adsbColor)
+      lcd.font(FONT_S)
+      lcd.color(adsbColor)
+      lcd.drawText(ax, ay + ar + 2, adsbRes.label, CENTERED)
+    else
+      adsbDrawX, adsbDrawY = ax, ay
+    end
+  end
   if status.zoomControlTarget ~= nil and status.zoomControlTarget ~= level then
     lcd.font(FONT_XL)
     local zoomTargetText = fmt("ZOOM > %d", status.zoomControlTarget)
@@ -1648,6 +1667,9 @@ function mapLib.drawMap(widget, x, y, w, h, level, tiles_x, tiles_y, heading, al
   status.uavEdgeDrawY = uavEdgeDrawY
   status.homeEdgeDrawX = homeDrawX
   status.homeEdgeDrawY = homeDrawY
+  status.adsbEdgeDrawX = adsbDrawX
+  status.adsbEdgeDrawY = adsbDrawY
+  status.adsbEdgeAlert = adsbRes and adsbRes.alert
 
   deactivateVpCtx()
   lcd.setClipping()

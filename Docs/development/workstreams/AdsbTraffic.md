@@ -1,7 +1,7 @@
-# ADSB Traffic from INAV (issue #47)
+# ADS-B Alert from INAV (issue #47)
 
 **Created:** 2026-11-04
-**Status:** Planned — not started. Target: INAV 10 warning + per-vehicle messages, no bulk list.
+**Status:** Implemented as experimental setting (default off), 2026-11-04 — not yet tested against a real INAV 10 FC. Tests: `build/tests/test_adsb.lua`, `build/tests/test_msp_adsb.lua` (simulated INAV 8/9/10 FC over CRSF).
 **Issue:** https://github.com/b14ckyy/ETHOSMappingWidget-Revisited/issues/47
 
 ## Goal
@@ -91,9 +91,15 @@ in the FC's selection.
   relative altitude only with an MSL source, "?" otherwise.
 - **Setting:** `adsbEnabled` (bool, default off), appended to storage. Thresholds come from the FC.
 
+## Later: full traffic display
+
+Showing all tracked contacts (not only the alert) is out of scope for this feature. It only makes
+sense on fast telemetry links (e.g. a modified mLRS) or with a leaner MSP telemetry scheme that is
+in development separately; revisit once ADS-B Alert has been verified on hardware.
+
 ## Open questions
 
-- INAV 9 support (bulk list, 160 B every poll) — proposal: no, INAV ≥ 10 only.
+- INAV 9 support (bulk list, 160 B every poll): not supported — INAV ≥ 10 only. On INAV 9 the first request (`MSP2_ADSB_VEHICLE_COUNT`) returns an error, on INAV < 9 it times out (no MSPv2 over telemetry); both switch ADS-B off for the session.
 - Real update rate over SmartPort with the staggered scan.
 - Testing without a receiver: INAV SITL with simulated ADSB, or recorded replies replayed through a stub.
 

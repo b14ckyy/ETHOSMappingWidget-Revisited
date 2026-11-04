@@ -32,6 +32,21 @@
 --   libs.msp.close()     — release sensor (call in close)
 --   libs.msp.getState()  — read current state + wp data
 --
+-- Author: b14ckyy (Marc Hoffmann), https://github.com/b14ckyy
+-- Based on the Yaapu Mapping Widget by Alessandro Apostoli, https://github.com/yaapu
+--
+-- This program is free software; you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation; either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- This program is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program; if not, see <http://www.gnu.org/licenses>.
 
 local msp = {}
 
@@ -233,6 +248,11 @@ local navState         = 0     -- navSystemStatus_State_e
 local activeWpNumber   = 0     -- FC's current WP index (1-based)
 local navError         = 0     -- navSystemStatus_Error_e
 local lastNavPollTime  = 0     -- os.clock() of last MSP_NAV_STATUS request
+
+-- Optional extra requester served in STATE_DONE when arming/nav polls are idle (adsb.lua).
+-- Interface: nextRequest(now) -> cmd, payload | nil; onReply(cmd, buf, err, now); onTimeout(cmd)
+local client    = nil
+local clientCmd = nil
 
 -- ============================================================================
 -- Debug logging helper (uses widget debug log if available)
@@ -935,6 +955,9 @@ function msp.poll()
                 handleStatus(buf)
             elseif cmd == MSP_NAV_STATUS and not err then
                 handleNavStatus(buf)
+            elseif client and cmd == clientCmd then
+                clientCmd = nil
+                client.onReply(cmd, buf, err, now)
             end
             currentCmd = nil
         end
@@ -952,9 +975,21 @@ function msp.poll()
                 currentCmd      = MSP_STATUS
                 lastReqTime     = now
                 lastArmPollTime = now
+            elseif client then
+                local ccmd, cpayload = client.nextRequest(now)
+                if ccmd then
+                    mspSendRequest(ccmd, cpayload)
+                    currentCmd  = ccmd
+                    clientCmd   = ccmd
+                    lastReqTime = now
+                end
             end
         end
         if currentCmd and (now - lastReqTime) > REQUEST_TIMEOUT then
+            if client and currentCmd == clientCmd then
+                clientCmd = nil
+                client.onTimeout(currentCmd)
+            end
             currentCmd = nil
         end
         return
@@ -1112,6 +1147,12 @@ function msp.getState()
         navMode        = navMode,
         activeWpNumber = activeWpNumber,
     }
+end
+
+--- Register (or clear with nil) the extra requester served in STATE_DONE.
+function msp.setClient(c)
+    client    = c
+    clientCmd = nil
 end
 
 --- Check if the state machine has completed successfully.

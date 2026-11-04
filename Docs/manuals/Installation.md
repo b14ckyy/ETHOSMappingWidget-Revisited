@@ -46,6 +46,7 @@ SD Card (root)
         │   ├── zoom_minus.png
         │   └── zoom_plus.png
         └── lib/
+            ├── adsb.lua
             ├── compute.lua
             ├── drawlib.lua
             ├── layout_default.lua

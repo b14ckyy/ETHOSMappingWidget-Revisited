@@ -13,6 +13,22 @@
 --   - Table reuse: overwrite result fields, never re-allocate
 --   - Optimize later: use perf logging to identify costly tasks
 -- ──────────────────────────────────────────────────────────────
+--
+-- Author: b14ckyy (Marc Hoffmann), https://github.com/b14ckyy
+-- Based on the Yaapu Mapping Widget by Alessandro Apostoli, https://github.com/yaapu
+--
+-- This program is free software; you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation; either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- This program is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program; if not, see <http://www.gnu.org/licenses>.
 
 local compute = {}
 
@@ -57,6 +73,13 @@ local results = {
     tpx   = nil,      -- observation marker tile-pixel X
     tpy   = nil,      -- observation marker tile-pixel Y
   },
+  adsb = {
+    tpx     = nil,    -- ADS-B threat contact tile-pixel X (extrapolated), nil = none
+    tpy     = nil,
+    heading = 0,      -- degrees
+    alert   = false,
+    label   = "",     -- "CALLSIGN 1.2km / 450m MSL" pre-formatted for paint
+  },
 }
 
 -- ── WP action constants (mirrored from maplib.lua) ─────────
@@ -65,6 +88,7 @@ local WP_ACT_POSHOLD_TIME  = 3
 local WP_ACT_SET_POI       = 5
 local WP_ACT_LAND          = 8
 local TILES_SIZE            = 100
+local ADSB_MAX_EXTRAPOLATION_S = 10
 
 local function wpHasPosition(action)
   return action == WP_ACT_WAYPOINT
@@ -310,6 +334,33 @@ local function computeTileGrid(st, lb, res)
   else
     res.observation.tpx = nil
     res.observation.tpy = nil
+  end
+
+  -- ADS-B threat contact: extrapolate by heading/speed since the last update, project, label.
+  local c = lb.adsb and lb.adsb.getContact()
+  if c and coordToTiles then
+    local age = (st.getTime() - c.rxTime) / 100 + c.tslc
+    if age > ADSB_MAX_EXTRAPOLATION_S then age = ADSB_MAX_EXTRAPOLATION_S elseif age < 0 then age = 0 end
+    local distM = c.speedMps * age
+    local hdg = math.rad(c.headingDeg)
+    local lat = c.lat + distM * math.cos(hdg) / 111320
+    local lon = c.lon + distM * math.sin(hdg) / (111320 * math.cos(math.rad(c.lat)))
+    local atx, aty, aox, aoy = coordToTiles(lat, lon, level)
+    res.adsb.tpx = atx * TILES_SIZE + aox
+    res.adsb.tpy = aty * TILES_SIZE + aoy
+    res.adsb.heading = c.headingDeg
+    res.adsb.alert = c.alert
+    local name = c.callsign ~= "" and c.callsign or string.format("%06X", c.icao)
+    if tel and tel.lat and tel.lon and lb.utils then
+      local d = lb.utils.haversine(tel.lat, tel.lon, lat, lon)
+      local dText = d >= 1000 and string.format("%.1fkm", d / 1000) or string.format("%dm", math.floor(d))
+      res.adsb.label = string.format("%s %s / %dm MSL", name, dText, math.floor(c.altM))
+    else
+      res.adsb.label = string.format("%s %dm MSL", name, math.floor(c.altM))
+    end
+  else
+    res.adsb.tpx = nil
+    res.adsb.tpy = nil
   end
 end
 

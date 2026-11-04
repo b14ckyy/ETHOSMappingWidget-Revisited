@@ -447,6 +447,16 @@ function panel.draw(widget)
     libs.drawLib.drawRArrow(eX, eY, edgeArrowR - floor(5 * edgeDamp), angle, colors.yellow)
   end
 
+  -- ADS-B threat out-of-view edge arrow (black outline + red alert / orange warning)
+  if status.adsbEdgeDrawX ~= nil then
+    local eX = max(edgeMargin, min(status.adsbEdgeDrawX, w - edgeMargin))
+    local eY = max(mapY + edgeMargin, min(status.adsbEdgeDrawY, mapY + mapH - edgeMargin))
+    local angle = _deg(_atan2(status.adsbEdgeDrawX - vcx, -(status.adsbEdgeDrawY - vcy)))
+    libs.drawLib.drawRArrow(eX, eY, edgeArrowR, angle, colors.black)
+    libs.drawLib.drawRArrow(eX, eY, edgeArrowR - floor(5 * edgeDamp), angle,
+      status.adsbEdgeAlert and colors.red or colors.adsbWarning)
+  end
+
 end
 
 function panel.background(widget)
