@@ -1,133 +1,181 @@
 # ETHOS 26.x — Platform Status and Optimization Candidates
 
-**Created:** 2026-09-15
-**Status:** Analysis — nothing implemented yet
-**Scope:** Performance and RAM. Ordered by expected impact. Every item needs a hardware
-measurement (PERF WINDOW) before and after; none of the numbers below are measured yet.
+**Created:** 2026-09-15 · **Updated:** 2026-11-04
+**Status:** Planned — O9 (swipe mode) is next, O4 (GC) leads the following optimization round
+**Scope:** Performance and RAM on ETHOS 26.1/26.2 without dropping 1.6. Every item needs a
+hardware measurement (PERF WINDOW) before and after.
+
+**Compatibility rule:** the widget stays ETHOS 1.6 compatible and uses 26.1/26.2 APIs where
+available. Gate new calls by feature detection (`type(lcd.isSwiping) == "function"`), cached once,
+not by version string parsing.
 
 ---
 
-## 1. ETHOS platform status (public information, 2026-09-15)
+## 1. ETHOS platform status
 
 | Item | Finding |
 |---|---|
-| Latest public release | **26.1.2** (2026-09-10, "for early adopters"). 26.1.0 came out 2026-08-18. |
-| 26.2 | **Not public.** No release, pre-release or nightly notes exist on GitHub. |
-| 1.6 line | **Still maintained**: 1.6.7 was released 2026-08-26, *after* 26.1.0. Raising the minimum to 26.1 would drop users who stay on 1.6.x. |
-| Lua interpreter | Reference guide still says "based on Lua 5.4.3". No 26.1.x release note mentions interpreter optimizations. |
-| Instruction limit | No 26.1.x release note mentions a change. `paint()` still has the ~40K limit as far as public information goes. `wakeup()` has been *preempted* (not killed) since 1.5.10 (issue #4103) — this matches the compute.lua design. The "replace limit by timeout" idea is not documented anywhere public; ask bsongis for the status/nightly before planning around it. |
-| Storage limit | Issue #5462 (tiny `storage.write` buffer) is still **open** → `state.dat` stays necessary. |
-| 26.1.0 changes relevant to us | Bitmaps moved into firmware ("RAM saved"); UI main delay reduced; new NAND cache (X18RS/X14/XERS — read/write regression fixed in 26.1.2); Lua errors shown with details and listed in System/Information; ELRS 4.0 sensors; `lcd.isSwiping()`, `lcd.isConfiguring()`, `lcd.getContrastingColor()`, theme colour constants, `system.getSources()`, `task.done()`. |
-| APIs that exist since 1.x but are unused here | `lcd.loadBitmap(path, lazy)` second parameter (default **lazy = true**), `lcd.isVisible()` (1.5.0), `lcd.invalidate(x,y,w,h)`, `system.getMemoryUsage()` (1.1.0, returns `luaRamAvailable` and `luaBitmapsRamAvailable`), `lcd.loadMask`/`drawMask`, `os.stat()`. |
-
-**Minimum version recommendation:** keep ETHOS 1.6 for 2.2. Gate 26.1-only calls with
-`mapStatus.ethosVersion.major >= 26`. Revisit for 3.0 once 26.x is the default shipped firmware.
+| Public releases (2026-09-15) | **26.1.2** latest (2026-09-10). 1.6 line still maintained (1.6.7, 2026-08-26). |
+| 26.2 | 26.2.0-RC7 tested on X20RS (2026-11-04, see §3). Not released. |
+| Instruction limit | Widgets: ~40K per `paint()`, no public change. `wakeup()` is preempted, not killed (since 1.5.10, issue #4103). |
+| Storage limit | Issue #5462 (tiny `storage.write` buffer) still open → `state.dat` stays necessary. |
+| 26.1.0 APIs relevant to us | `lcd.isSwiping()` (boolean, "check if the window is swiping"), `lcd.isConfiguring()`, `lcd.getContrastingColor()`, theme colour constants, `system.getSources()`, `task.done()`. |
+| 26.2 API | `system.getInstructionsUsage()` (percent of the paint budget, see §3 for what it counts). |
+| Older APIs still unused | `lcd.loadBitmap(path, lazy)` second parameter (default **lazy = true**), `lcd.isVisible()` (1.5.0), `lcd.invalidate(x,y,w,h)`, `system.getMemoryUsage()` (1.1.0), `lcd.loadMask`/`drawMask`. |
+| Bitmap API | `Bitmap` has only `width()`, `height()`, `rotate()` (26.1.2 doc). No resize, no offscreen target, no bitmap from memory — scaled icons cannot be pre-rendered at runtime. |
 
 ---
 
 ## 2. Optimization candidates
 
-### O1 — Tiles are probably decoded inside paint() (lazy loadBitmap)  `HIGH · paint budget · easy`
+### O9 — Swipe mode: freeze background math while the home screen swipes  `NEXT · UX · easy`
 
-`lcd.loadBitmap(path, lazy)` defaults to `lazy = true` ("only loaded when needed"). `tileloader.lua`
-calls `lcd.loadBitmap(path)` without the second argument, so the file is only probed in `wakeup()`
-and the JPEG/PNG decode most likely happens at the first `lcd.drawBitmap()` — inside `paint()`.
-The ff0005e measurement (`loadMs/tile 19.7 → 1.2 ms`) is consistent with that: the decode did not
-get 16× faster, it moved.
+ETHOS does **not** keep showing the last widget frame during a swipe (tested earlier with a
+manual swipe detection) — `paint()` has to keep running. What can stop is the background work,
+so `paint()` gets the maximum draw rate the visible map allows and the radio UI feels less
+sluggish.
 
-- Fix: `lcd.loadBitmap(path, false)` in `tryLoadBitmap()` and for the sentinel bitmaps.
-- Verify: PERF `tileIO loadMs` must go back up (~12–20 ms/tile) and `paint drawTilesMs` must drop
-  on the first frame after zoom/pan. Keep the time budget in `processQueue()` — it now measures real work.
-- Side effect: with lazy loading, bitmap RAM is not allocated at load time, so the cache-ring / GC
-  reasoning in `ETHOS-BITMAP-GC-TIMING.md` was reasoning about handles, not pixels. Re-check after the fix.
+Design:
+- `create()`: cache `swipeFn = type(lcd.isSwiping) == "function" and lcd.isSwiping or nil`
+  (nil on 1.6 → feature off, no behaviour change).
+- `wakeupInner()`: `local swiping = swipeFn and swipeFn()`; store as `mapStatus.swiping`.
+  - Keep while swiping: `msp.poll()` loop (SmartPort buffer overflow otherwise), `bgtasks()`
+    telemetry reads, `updateTrail()` (cheap, avoids a gap in the trail), `lcd.invalidate()`.
+  - Skip while swiping: `compute.update()` (incl. the every-cycle `needsTileGrid`),
+    `tileLoader.processQueue()`, RC zoom channel handling, periodic GC, log flush.
+  - On the falling edge (swipe ended): `markMapDirty()` so the next cycle reprojects.
+- `paint()`: while `mapStatus.swiping`, use the existing reduced draw path of active panning
+  (overlays skipped, bar content frozen) so the frame only blits tiles, bars and icons.
+- Debug: one `SWIPE` log line per edge (start/end, duration) to confirm `isSwiping()` actually
+  reports home-screen swipes for a widget window — verify this first on hardware.
 
-### O2 — `lcd.invalidate()` on every wakeup  `HIGH · CPU · medium`
+Verify (hardware, 26.1.2): PERF `fps` and `wakeup totMs` during 20–30 s of continuous swiping,
+with and without the change. Map must be correct immediately after the swipe ends; MSP must not
+report errors during swipes. On 1.6.x: no change at all.
 
-`wakeup()` ends with an unconditional `lcd.invalidate()`, so `paint()` runs every cycle even when
-nothing changed (idle on the bench: ~5 fps × 150 ms = the CPU is ~75 % busy painting a static map).
+### O4 — GC strategy  `HIGH (first item of the next optimization round) · CPU`
 
-- Fix: invalidate only when something is dirty — GPS position changed, tile loaded, pan/zoom, MSP
-  publish, bar tick (1 Hz), blink toggle, telemetry-lost flag. `markMapDirty()` already exists as
-  the hook; add `tilesLoaded > 0` and the bar tick.
-- Optional: `lcd.invalidate(x, y, w, h)` for the bars only when only bar values changed.
-- Verify: PERF `paints` per window drops sharply when idle; unchanged during pan/flight.
-  Watch for stale overlays (blink, telemetry-lost colour) — those must set the flag.
+`wakeup()` runs two full `collectgarbage()` every 10 wakeups (`main.lua`, introduced in "Step B"
+of `PerformanceExperimentsPlan.md` to get GC out of the hot paths). `tileloader.processQueue()`
+additionally runs two full collects before loading after an eviction (`pendingGCBeforeLoad`,
+bitmap safety — stays untouched).
 
-### O3 — Skip work when the widget is not visible  `HIGH · CPU+RAM · easy`
+1. Measure: `gc_ms` metric around the periodic collect, shown in the PERF table. Correlate with
+   `frame100ms`.
+2. If it is significant (rule of thumb > 15 ms per occurrence): replace the periodic double full
+   collect by `collectgarbage("step", n)` every wakeup — constant small cost instead of a spike
+   every ~3 s.
+3. Fallback if `step` misbehaves: split the two passes over two consecutive wakeups (halves the
+   spike, same total work).
+4. `collectgarbage("generational")` only as a later experiment (least tested with userdata finalizers).
+
+Reference: doombench measured ~97 ms for 2× full GC right after freeing 64 bitmaps — that is the
+eviction case, not the periodic one, so it does not predict our number.
+
+### PERF additions  `HIGH · tooling · easy`
+
+- `gc_ms` (see O4).
+- 26.2: `system.getInstructionsUsage()` at the end of `paint()` → `instr%` avg/max. In a system
+  tool it counts drawing work, not VM instructions (§3); check what it counts for a widget before
+  using it for decisions.
+- `system.getMemoryUsage()` → `luaFree` / `bmpFree` row, logging only. The tile cache ring is
+  tuned and stays as is.
+
+### O3 — Skip work when the widget is not visible  `MEDIUM · CPU · easy`
 
 No `lcd.isVisible()` check anywhere. While another screen is shown, the widget still loads tiles,
-runs compute, invalidates and GCs.
-
-- Fix: at the top of `wakeupInner()`, if `not lcd.isVisible()` → run only MSP poll, `bgtasks()`
-  (telemetry + trail) and log flush; skip compute, tile queue, invalidate, GC.
-- Verify first: add a one-shot log line to confirm ETHOS calls `wakeup()` for off-screen widgets
-  at all (expected yes, same as sources/tasks).
-
-### O4 — GC strategy  `MEDIUM · CPU · medium`
-
-Full `collectgarbage()` runs twice every 10 wakeups (`main.lua`) and twice before every tile batch
-(`tileloader.processQueue`). Each full mark-and-sweep over a multi-MB heap costs 5–50 ms and shows
-up as `frame ≥ 100 ms`.
-
-- Measure first: add `gc_ms` to the perf metrics around every `collectgarbage()` call.
-- Options (Lua 5.4): `collectgarbage("generational")` once in `create()` (short-lived tables die
-  cheaply); replace the periodic full collect with `collectgarbage("step", N)`; keep exactly one full
-  collect only after `trimCache()` evicted bitmaps (bitmap userdata needs a finalizer pass).
-- Risk: generational mode + userdata finalizers is the least tested combination; watch RAM in PERF.
-
-### O5 — Adaptive tile cache from `system.getMemoryUsage()`  `MEDIUM · RAM · medium`
-
-The cache ring size and the ~831 KB OOM cliff are guesswork today.
-
-- Log `luaRamAvailable` and `luaBitmapsRamAvailable` in the PERF table (new `mem` row).
-- Size `cacheRing` / prefetch depth from `luaBitmapsRamAvailable`: stop prefetching below a floor,
-  shrink the ring when low, grow it on radios with headroom (X20 vs X14 vs XE).
-- This also gives the RAM metric that has been missing for every tuning decision so far.
+runs compute, invalidates and GCs. Same keep/skip split as O9 (MSP, telemetry, trail keep running)
+plus skip `lcd.invalidate()`. Verify first that ETHOS calls `wakeup()` for off-screen widgets.
+Natural follow-up to O9 (shares the skip path).
 
 ### O6 — MSP poll early-out  `LOW · CPU · easy`
 
-`msp.poll()` is called 10× per wakeup unconditionally. When the state is DONE/ERROR/OFF and the
-next arming/nav poll is seconds away, the loop should return after one call. Cheap, but it is 10
-function calls + state checks every cycle for nothing.
+`msp.poll()` is called 10× per wakeup unconditionally. In DONE/ERROR/OFF with the next
+arming/nav poll seconds away, return after one call.
 
-### O7 — Clipping: let the firmware do it  `LOW-MEDIUM · paint budget · experiment`
+### O2 — Idle invalidation  `LOW · experiment`
 
-`drawMap()` already sets `lcd.setClipping(x, y, w, h)`. The Lua-side Cohen-Sutherland
-`clipLine()` then computes intersection points for every trail/WP segment that crosses the edge.
-Keep the trivial-reject (saves draw calls for fully off-screen segments), drop the intersection
-math and let the firmware clip. Needs an A/B with a dense mission and a long trail — the firmware
-clipper may be slower for very long lines.
+`lcd.invalidate()` runs every wakeup **on purpose**: the dirty-flag scheduler from "Step A" was
+removed in a2ab3c6 because ETHOS couples touch events to render cycles and short taps were missed
+at 2 Hz. In flight the fastest input is 5 Hz GPS/heading telemetry, which the widget already
+renders; panning needs a full redraw every frame anyway. Remaining idea, only as a test:
+when nothing is dirty, call `lcd.invalidate(0, 0, 1, 1)` instead of a full invalidate and check
+(a) taps are still delivered and (b) whether ETHOS limits the repaint to that rect (PERF
+`drawTilesMs` drops). If (a) fails, drop O2.
 
-### O8 — UI icons as masks  `LOW · RAM · easy`
+### O1 — Eager bitmap decode  `PARKED · tile loader`
 
-Zoom/lock/pin/home icons are RGBA PNGs loaded as bitmaps. `lcd.loadMask` + `lcd.drawMask` uses
-8-bit masks, colours them with the current `lcd.color()` and needs less bitmap RAM. With 26.1
-theme constants the icons could follow the theme. Small win, cosmetic bonus.
+`tryLoadBitmap()` calls `lcd.loadBitmap(path)` → lazy: the handle is created in `wakeup()`
+(~1 ms), the JPEG decode happens at the first `lcd.drawBitmap()` inside `paint()`. This has been
+the case since the beginning (also before ff0005e; its 19.7 → 1.2 ms came from dropping the
+`fileExists()` opens and failed probes). doombench P14 confirms the behaviour on 26.2: 64 lazy
+JPGs, first frame 501 ms, following frames 10 ms.
 
-### O9 — 26.1-only: `lcd.isSwiping()`  `LOW · UX · easy`
+Parked: the loader fills a full zoom refresh in < 2 s on 1.6.x and < 1 s on 26.1 and keeps up
+with slow-to-medium finger panning. Do not touch without a concrete problem. If it is ever
+revisited: `loadBitmap(path, false)` moves the decode into the time budget, but prefetched tiles
+would then occupy bitmap RAM before they are drawn — the cache ring tuning must be re-checked
+with the `bmpFree` row.
 
-Skip `drawMap()` (draw only the last frame's bars, or nothing) while the home screen is being
-swiped. Directly targets the "UI stutter during screen swipes" hardware-only test item. Gate by
-`ethosVersion.major >= 26`.
+### O8 — UI icons  `LATER · paint · easy`
 
-### O10 — Tile format re-check on 26.1  `INFO`
+Zoom/lock/pin icons are 52×52 PNGs drawn scaled (`floor(52 * scaleFactor)`, 49 px at full
+screen). Scaled blits are expensive on 26.2 (doombench P21: ~1.3 ms for a 48 px blit), but during
+panning only 3 icons are on screen, so the gain is a few ms. Options when this comes up: draw at
+native size when `btnSize` is within a few px of 52, ship pre-scaled PNGs in 3–4 sizes, or
+`lcd.loadMask`/`drawMask` (8-bit masks, theme-coloured, less bitmap RAM).
 
-26.1 changed the flash/NAND layer. Re-run `TILE-LOADING-BENCHMARK.md` (JPG vs BMP vs PNG,
-internal vs SD) on 26.1.2 before assuming the 1.6 numbers still hold — especially on NAND radios.
+### O7 — Clipping: let the firmware do it  `LOW · experiment`
+
+Keep the trivial reject in `clipLine()`, drop the intersection math and rely on `lcd.setClipping`.
+Needs an A/B with a dense mission and a long trail.
+
+### O10 — Tile format re-check on 26.x  `INFO`
+
+Re-run `TILE-LOADING-BENCHMARK.md` (JPG vs PNG, internal vs SD) on 26.1.2. BMP: see B1.
 
 ---
 
-## 3. Housekeeping found on the way
+## 3. Reference measurements: doombench on 26.2.0-RC7 (X20RS, 2026-11-04)
 
-- ~~`RADIO/scripts/ethosmaps/lib/prepaint.lua` stale file~~ — fixed 2026-09-29: `Build-Release.ps1`
-  now mirrors `lib/` into the simulator folder and removes stale files and `.luac` caches.
+Taken with a Lua **system tool** (private Doom-on-ETHOS experiment), not a widget — use as
+orientation, not as widget numbers.
+
+| Measurement | Result |
+|---|---|
+| Lua VM | ~2.7 µs per VM instruction; Lua function call ~30 µs, C call ~18 µs |
+| Lua in `paint()` vs `wakeup()` | 13 vs 5.7 µs per loop iteration → `paint()` Lua is ~2.3× slower |
+| Lazy load (P14) | handle ~0.4 ms, decode (~8 ms per 32×32 JPG) at first draw in `paint()` |
+| Eager load (W02/W03) | JPG ~8 ms, PNG ~8 ms per 32×32; 2 KB `bmpFree` each, ~120 B Lua heap |
+| Blits | Unscaled 32×32 JPG ~116 µs; scaled ~2 Mpx/s (48 px 1.3 ms, 96 px 4.5 ms, 192 px 17 ms) |
+| `getInstructionsUsage()` in a system tool | counts drawing work, not VM instructions: ~2 100 rects = 100 %, weights ≈ rect 1, color 0.55, clip 1, blit 1.5. After hitting 100 % the counter stays 0 until the tool exits (RC7 bug) |
+| BMP | 24-bit BI_RGB: `loadBitmap` returns a handle, `width()` = 0, nothing is drawn, no bitmap RAM used |
+| RAM | Lua heap and bitmap pool behave as separate pools (~720 KB vs ~2.5 MB free at tool start) |
+
+---
+
+## 4. Bugs / compatibility
+
+### B1 — BMP tiles not drawn on 26.2.0-RC7  `OPEN · reported to bsongis 2026-11-04`
+
+`tryLoadBitmap()` accepts any non-nil handle, so a BMP tile that loads with `width() == 0`
+counts as loaded: no fallback to JPG/PNG, and `cachedTileFormat` then sends every following
+tile to `.bmp` → empty map for BMP users on 26.2. Pending the answer from bsongis: either it is
+fixed before 26.2 final, or `tryLoadBitmap()` rejects handles with `width() == 0` and
+MapTilesGuide drops the BMP recommendation for 26.2.
+
+---
+
+## 5. Housekeeping
+
 - `msp.lua`, `compute.lua`, `resetLib.lua` lack the GPL header.
+- `main.lua` periodic GC comment is German ("Step B: Periodische Garbage Collection") → English when O4 touches it.
 - MapTiler (PR #49) and the ff0005e tile-I/O change have no CHANGELOG/README/MapTilesGuide entry.
 
-## 4. Suggested order
+## 6. Order
 
-1. O1 (one-line change, biggest suspected paint win) → measure.
-2. O3 + O6 (safe, small) → measure idle CPU.
-3. O2 (dirty-flag invalidation) → measure idle vs pan.
-4. O5 logging first (mem row), then O4 GC experiments with the numbers in hand.
-5. O7/O8/O9 as time permits.
+1. **O9** swipe mode (+ the `SWIPE` debug line) → hardware test on 26.1.2 and 1.6.x.
+2. **PERF additions** (`gc_ms`, `instr%`, mem row) — can ship together with O9.
+3. Next optimization round: **O4** first, then O3 + O6.
+4. B1 as soon as bsongis answers.
+5. Later / experiments: O2, O8, O7, O10. O1 stays parked.
