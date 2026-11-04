@@ -56,10 +56,13 @@ The indicators return to normal automatically when GPS telemetry resumes.
 
 This is **normal** before arming. The home position is set automatically when:
 
-- The flight controller arms (detected via MSP, INAV only), or
+- The flight controller arms (detected via MSP, INAV only — *Home set trigger* = MSP arming), or
+- The configured home switch becomes active while a GPS position is available (*Home set trigger* = Switch; works without any flight controller), or
 - You manually set it via **long press → Set Home**
 
-If the warning persists after arming, check that the FC is reporting arming status via MSP and that your RC Link supports MSP-Passthrough.
+If the warning persists after arming:
+- **MSP arming:** check that the FC is reporting arming status via MSP and that your RC link supports MSP passthrough.
+- **Switch:** the switch was activated before a GPS position was available. Switch it off and on again once GPS is valid, or use Set Home.
 
 ---
 

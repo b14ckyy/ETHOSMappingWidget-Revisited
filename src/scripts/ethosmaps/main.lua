@@ -127,6 +127,8 @@ local mapStatus = {
     zoomControl = 0,  -- 0 = OFF (touch buttons), 1 = 3-POS switch, 2 = Proportional
     zoomChannel = 0,  -- RC channel number (1-64) for zoom input
     wpDownload = false,  -- Enable/disable INAV waypoint download and display
+    homeSource = 1,      -- 1 = MSP arming (INAV), 2 = switch
+    homeSwitch = nil,    -- Switch source that sets home on its rising edge (homeSource = 2)
     -- Layout selection persisted for future layout variants.
     layout = 1,
   },
@@ -199,6 +201,7 @@ local mapStatus = {
   mspMissionIdx = 1,      -- 1-based index of the currently displayed mission
   mspDownloadDone = false, -- true once mission data has been copied from msp lib
   mspArmedHomeSet = false, -- true once home was auto-set from arming detection
+  homeSwitchLast = nil,    -- last sampled home switch state; nil = resample without triggering
   mspNavMode = 0,         -- navSystemStatus_Mode_e: 0=NONE 1=HOLD 2=RTH 3=NAV
   mspActiveWp = 0,        -- FC's currently active WP index (1-based)
 
@@ -1480,6 +1483,27 @@ local function wakeupInner(widget)
     end
   end
 
+  -- Home set via switch: rising edge with a valid GPS position sets home.
+  if mapStatus.conf.homeSource == 2 then
+    local sw = mapStatus.conf.homeSwitch
+    local active = false
+    if sw ~= nil and type(sw.state) == "function" then
+      active = sw:state() == true
+    end
+    local last = mapStatus.homeSwitchLast
+    mapStatus.homeSwitchLast = active
+    if last == false and active then
+      local telemetry = mapStatus.telemetry
+      local hasFix = telemetry.lat ~= nil and telemetry.lon ~= nil
+      if hasFix then
+        setHome(widget)
+      end
+      if mapStatus.debugEnabled and mapLibs and mapLibs.utils then
+        mapLibs.utils.logDebug("HOME", hasFix and "switch edge -> home set" or "switch edge -> no GPS fix, home not set", true)
+      end
+    end
+  end
+
   -- Zoom control via RC channel
   local zoomCtrl = mapStatus.conf.zoomControl
   local zoomCh = mapStatus.conf.zoomChannel
@@ -1656,7 +1680,9 @@ local function wakeupInner(widget)
     end
 
     -- Auto set-home when FC reports armed (once per arming cycle)
-    if mspState.isArmed and not mapStatus.mspArmedHomeSet then
+    if mapStatus.conf.homeSource == 2 then
+      mapStatus.mspArmedHomeSet = false
+    elseif mspState.isArmed and not mapStatus.mspArmedHomeSet then
       if mapStatus.telemetry.lat ~= nil and mapStatus.telemetry.lon ~= nil then
         setHome(widget)
         mapStatus.mspArmedHomeSet = true
@@ -2673,6 +2699,29 @@ local function configure(widget)
     end
   )
 
+  line = form.addLine("Home set trigger")
+  form.addChoiceField(line, form.getFieldSlots(line)[0],
+    {{"MSP arming (INAV)", 1}, {"Switch", 2}},
+    function() return mapStatus.conf.homeSource end,
+    function(value)
+      mapStatus.conf.homeSource = value
+      mapStatus.homeSwitchLast = nil
+      if widget.homeSwitchField ~= nil then
+        widget.homeSwitchField:enable(value == 2)
+      end
+    end
+  )
+
+  line = form.addLine("Home set switch")
+  widget.homeSwitchField = form.addSwitchField(line, nil,
+    function() return mapStatus.conf.homeSwitch end,
+    function(value)
+      mapStatus.conf.homeSwitch = value
+      mapStatus.homeSwitchLast = nil
+    end
+  )
+  widget.homeSwitchField:enable(mapStatus.conf.homeSource == 2)
+
   line = form.addLine("Zoom control")
   form.addChoiceField(line, form.getFieldSlots(line)[0],
     {{"Off", 0}, {"3-Position", 1}, {"Proportional", 2}},
@@ -2921,6 +2970,8 @@ local function read(widget)
   mapStatus.conf.sensorHeading = storageToConfig("sensorHeading", nil)
   mapStatus.conf.sensorSpeed = storageToConfig("sensorSpeed", nil)
   mapStatus.conf.wpDownload = storageToConfig("wpDownload", true)
+  mapStatus.conf.homeSource = storageToConfig("homeSource", 1)
+  mapStatus.conf.homeSwitch = storageToConfig("homeSwitch", nil)
 
   -- Restore runtime state from file (observation marker, default position, zoom level).
   local state = readStateFile()
@@ -2971,6 +3022,8 @@ local function write(widget)
   storage.write("sensorHeading", mapStatus.conf.sensorHeading)
   storage.write("sensorSpeed", mapStatus.conf.sensorSpeed)
   storage.write("wpDownload", mapStatus.conf.wpDownload == true)
+  storage.write("homeSource", mapStatus.conf.homeSource)
+  storage.write("homeSwitch", mapStatus.conf.homeSwitch)
 
   -- Persist runtime state (observation, default position, zoom) to file
   writeStateFile()

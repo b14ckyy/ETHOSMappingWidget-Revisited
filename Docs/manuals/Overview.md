@@ -46,7 +46,7 @@ The current zoom level is shown in the top-left corner of the map.
 ### Map Elements
 
 - **UAV icon** — shows the vehicle's current position and heading. Three symbol styles are available: Arrow, Airplane, and Multirotor (configurable in settings). The UAV symbol turns **red** when GPS telemetry is lost (no position update for 5 seconds).
-- **Home marker** — shows the home position (set automatically on arming or manually via menu).
+- **Home marker** — shows the home position (set automatically on arming — detected via MSP or a switch, see *Home set trigger* — or manually via menu).
 - **Home direction indicator** — an arrow at the edge of the map pointing toward home when home is off-screen.
 - **Trail** — a yellow line tracing the flight path. Trail resolution and bend sensitivity are configurable.
 - **Scale bar** — bottom-left corner, shows the current map scale.
@@ -120,6 +120,8 @@ Open the widget settings through **System → Widgets → ETHOS Mapping Widget**
 | Setting                  | Description                                                                                | Default |
 |--------------------------|--------------------------------------------------------------------------------------------|---------|
 | Waypoint download (INAV) | Automatically download and display INAV missions via MSP (SmartPort, Crossfire, ELRS)      | On      |
+| Home set trigger         | How home is set automatically: **MSP arming (INAV)** — the FC reports armed (polled every 5 s), or **Switch** — the selected switch position becomes active. With *Switch*, MSP arming is ignored for home | MSP arming |
+| Home set switch          | Switch position that sets home, typically your arming switch (only when the trigger is *Switch*). Home is set on the moment the switch becomes active and only with a valid GPS position; without GPS fix, home stays empty until the next off→on or a manual Set Home | — |
 | Zoom control             | Control zoom via RC channel: Off, 3-Position switch, or Proportional                       | Off     |
 | Zoom channel             | RC channel number (1–64) for zoom input (only when zoom control is enabled)                | 0       |
 
