@@ -37,31 +37,10 @@ local WIDGET_VERSION = "2.1.0"
 local STORAGE_SCHEMA = 2
 
 
-local _getTimeImpl = nil
-
+-- Canonical time source for the entire widget, in centiseconds (wall clock, 1 s resolution).
+-- Float multiply: ETHOS integers are 32-bit, see Docs/development/helper/ETHOS-LUA-NUMBERS-AND-TIME.md
 local function getTime()
-  -- Canonical time source for the entire widget, returning centiseconds.
-  -- Caches the winning source on first successful call to avoid re-probing each frame.
-  if _getTimeImpl ~= nil then
-    return _getTimeImpl()
-  end
-
-  if system ~= nil and type(system.getTimeCounter) == "function" then
-    local ms = system.getTimeCounter()
-    if type(ms) == "number" and ms >= 0 then
-      _getTimeImpl = function() return system.getTimeCounter() / 10 end
-      return ms / 10
-    end
-  end
-
-  local wallSec = os_time()
-  if type(wallSec) == "number" and wallSec > 0 then
-    _getTimeImpl = function() return os_time() * 100 end
-    return wallSec * 100
-  end
-
-  _getTimeImpl = function() return os_clock() * 100 end
-  return os_clock() * 100
+  return os_time() * 100.0
 end
 
 -- Pan state constants
@@ -309,7 +288,7 @@ local function perfWindowNowMs()
   -- Use wall-clock seconds for window scheduling; os.clock() is CPU-time and can stall under low load.
   local wallSec = os_time()
   if type(wallSec) == "number" and wallSec > 0 then
-    return wallSec * 1000
+    return wallSec * 1000.0
   end
   -- Fallback to widget timer when RTC is unavailable.
   return getTime() * 10
