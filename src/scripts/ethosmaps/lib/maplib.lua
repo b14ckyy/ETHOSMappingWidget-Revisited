@@ -542,6 +542,8 @@ function mapLib.drawTiles(width, xmin, ymin)
         end
       end
     end
+    -- Collect MSP reply frames between tile columns: a long paint otherwise lets Ethos drop them
+    if libs.msp then libs.msp.poll() end
   end
 
   if status.debugEnabled then

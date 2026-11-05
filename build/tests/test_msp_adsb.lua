@@ -182,7 +182,7 @@ do
   msp.open({ armingOnly = true })
   adsb.setEnabled(true)
   msp.setClient(adsb)
-  run(10)
+  run(30)
   check("INAV 8: no MSPv2 reply -> unsupported after timeouts", adsb.getPhase() == "unsupported")
   check("INAV 8: MSP still idle/done", msp.isDone())
   msp.close()

@@ -809,7 +809,10 @@ local function paintInner(widget)
       if perfActive then
         drawStartMs = perfNowMs()
       end
+      -- Collect MSP reply frames around the map draw: a long paint otherwise lets Ethos drop them
+      if mapLibs.msp then mapLibs.msp.poll() end
       mapStatus.layout[widget.screen].draw(widget)
+      if mapLibs.msp then mapLibs.msp.poll() end
       if perfActive then
         perfAddMs("layout_draw_ms", perfNowMs() - drawStartMs)
       end
