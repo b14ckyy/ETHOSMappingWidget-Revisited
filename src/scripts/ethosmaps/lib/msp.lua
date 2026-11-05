@@ -68,6 +68,8 @@ local function btest(a, b)  return (a & b) ~= 0 end
 local fmt   = string.format
 local char  = string.char
 local clock = os.clock
+local max   = math.max
+local tremove = table.remove
 
 -- ============================================================================
 -- MSP command IDs
@@ -198,6 +200,10 @@ local mspStarted   = false
 local mspLastReq   = 0
 local lastRxFrameTime = 0
 local lastChunkTime   = 0
+
+-- Reply frames picked up by msp.stashFrames() during paint(), handled by poll() in arrival order
+local rxStash      = {}
+local RX_STASH_MAX = 64
 
 -- Duplicate-frame filter (SmartPort only)
 local prevSensorId, prevFrameId, prevDataId, prevValue
@@ -541,7 +547,7 @@ end
 local function mspPollReply()
     if not rawPoll then return nil end
     while true do
-        local frame = rawPoll()
+        local frame = tremove(rxStash, 1) or rawPoll()
         if not frame then return nil end
         lastRxFrameTime = clock()
         local result = mspReceivedReply(frame)
@@ -784,6 +790,7 @@ local function activateTransport()
     local t = transportCandidates[transportIdx]
     if not t then return false end
     sensor          = t.sensor
+    rxStash         = {}
     transportType   = t.type
     maxFramePayload = t.payload
     rawSend         = t.send
@@ -922,6 +929,7 @@ function msp.close()
     rawPoll             = nil
     transportCandidates = {}
     transportIdx        = 0
+    rxStash             = {}
     state               = STATE_OFF
     log("MSP", "Sensor released")
 end
@@ -973,7 +981,7 @@ function msp.poll()
                 end
             end
         end
-        if currentCmd and (now - math.max(lastReqTime, lastChunkTime, lastRxFrameTime)) > REQUEST_TIMEOUT then
+        if currentCmd and (now - max(lastReqTime, lastChunkTime, lastRxFrameTime)) > REQUEST_TIMEOUT then
             mspTxBuf = {}
             mspTxIdx = 1
             mspTxCRC = 0
@@ -1138,6 +1146,17 @@ function msp.getState()
         navMode        = navMode,
         activeWpNumber = activeWpNumber,
     }
+end
+
+--- Pick up waiting reply frames without touching the MSP state, for use in paint().
+--- A long map draw otherwise lets Ethos drop them; poll() handles them later.
+function msp.stashFrames()
+    if not rawPoll then return end
+    while #rxStash < RX_STASH_MAX do
+        local frame = rawPoll()
+        if not frame then return end
+        rxStash[#rxStash + 1] = frame
+    end
 end
 
 --- Register (or clear with nil) the extra requester served in STATE_DONE.

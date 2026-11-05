@@ -42,7 +42,7 @@ adsb.CMD_COUNT   = MSP2_ADSB_VEHICLE_COUNT
 local WARN_POLL_IDLE_S   = 5.0
 local WARN_POLL_THREAT_S = 2.0
 local CONTACT_STALE_S    = 15.0
-local MAX_PROBE_TIMEOUTS = 20   -- lossy S.Port links lose 3 probes in a row often
+local MAX_PROBE_TIMEOUTS = 10   -- S.Port links can lose a few probes in a row
 local VEHICLE_REPLY_LEN  = 23
 local CALLSIGN_LEN       = 9
 
@@ -181,11 +181,6 @@ function adsb.nextRequest(now)
   if lastWarnPoll == nil or now - lastWarnPoll >= interval then
     lastWarnPoll = now
     return MSP2_ADSB_WARNING_VEHICLE_ICAO, {}
-  end
-  -- Between warning polls keep refreshing the tracked contact: on a lossy link most refreshes fail
-  if threatIcao ~= 0 and trackSlot ~= nil then
-    requestedSlot = trackSlot
-    return MSP2_ADSB_VEHICLE, { trackSlot }
   end
   return nil
 end

@@ -89,8 +89,7 @@ do
   adsb.onReply(adsb.CMD_VEHICLE, vehicle(0x3C6A12, 514000000, 115000000, 30000, 9000, 6000, 1, 1, 9, "TEST1"), false, step())
   local ct = adsb.getContact()
   check("threat found and tracked", ct ~= nil and ct.callsign == "TEST1" and ct.alert == true)
-  c, p = adsb.nextRequest(step())
-  check("tracked slot refreshed between threat polls", c == adsb.CMD_VEHICLE and p[1] == 2)
+  check("no request right after track", adsb.nextRequest(step()) == nil)
 
   c = adsb.nextRequest(step(2))
   check("threat poll every 2 s", c == adsb.CMD_WARNING)
@@ -129,8 +128,8 @@ do
   adsb.setEnabled(true)
   for _ = 1, 3 do adsb.nextRequest(step()); adsb.onTimeout(adsb.CMD_COUNT) end
   check("3 probe timeouts keep probing (lossy S.Port)", adsb.getPhase() == "probing")
-  for _ = 4, 20 do adsb.nextRequest(step()); adsb.onTimeout(adsb.CMD_COUNT) end
-  check("20 probe timeouts -> unsupported", adsb.getPhase() == "unsupported")
+  for _ = 4, 10 do adsb.nextRequest(step()); adsb.onTimeout(adsb.CMD_COUNT) end
+  check("10 probe timeouts -> unsupported", adsb.getPhase() == "unsupported")
 
   adsb.setEnabled(true)
   adsb.nextRequest(step())
