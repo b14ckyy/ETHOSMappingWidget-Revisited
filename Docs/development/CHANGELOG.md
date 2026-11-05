@@ -4,6 +4,13 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
+## Unreleased
+
+### Fixed
+- **ADS-B Alert over S.Port** (PR #50, MartinovEm): requests no longer cancel the FC's reply (no MSPv2 request CRC, no empty trailing chunk). A request frame that Ethos refuses is sent again, multi-chunk requests are paced, the reply assembly is reset on every request, and a request counts as lost after 0.8 s without a reply frame. Reply frames are also picked up during paint, so a long map draw no longer lets Ethos drop them; the MSP state is still handled in wakeup only.
+
+---
+
 ## 2.2.0 (2026-11-04)
 
 ### Added

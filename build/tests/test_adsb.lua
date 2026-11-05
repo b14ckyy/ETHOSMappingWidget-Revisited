@@ -127,7 +127,9 @@ do
 
   adsb.setEnabled(true)
   for _ = 1, 3 do adsb.nextRequest(step()); adsb.onTimeout(adsb.CMD_COUNT) end
-  check("3 probe timeouts -> unsupported", adsb.getPhase() == "unsupported")
+  check("3 probe timeouts keep probing (lossy S.Port)", adsb.getPhase() == "probing")
+  for _ = 4, 10 do adsb.nextRequest(step()); adsb.onTimeout(adsb.CMD_COUNT) end
+  check("10 probe timeouts -> unsupported", adsb.getPhase() == "unsupported")
 
   adsb.setEnabled(true)
   adsb.nextRequest(step())

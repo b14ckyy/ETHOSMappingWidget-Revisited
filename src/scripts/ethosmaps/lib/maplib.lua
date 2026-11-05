@@ -542,6 +542,8 @@ function mapLib.drawTiles(width, xmin, ymin)
         end
       end
     end
+    -- Pick up MSP reply frames between tile columns (no MSP state is touched here, wakeup handles them)
+    if libs.msp then libs.msp.stashFrames() end
   end
 
   if status.debugEnabled then

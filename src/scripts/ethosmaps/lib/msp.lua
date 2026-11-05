@@ -68,22 +68,8 @@ local function btest(a, b)  return (a & b) ~= 0 end
 local fmt   = string.format
 local char  = string.char
 local clock = os.clock
-
--- ============================================================================
--- CRC8 DVB-S2  (for MSPv2 payload integrity)
--- ============================================================================
-local function crc8_dvb_s2(crc, byte)
-    crc = bxor(crc, byte)
-    for _ = 1, 8 do
-        if btest(crc, 0x80) then
-            crc = bxor(lshift(band(crc, 0xFF), 1), 0xD5)
-        else
-            crc = lshift(band(crc, 0xFF), 1)
-        end
-        crc = band(crc, 0xFF)
-    end
-    return crc
-end
+local max   = math.max
+local tremove = table.remove
 
 -- ============================================================================
 -- MSP command IDs
@@ -146,7 +132,8 @@ local MSP_STARTFLAG   = 0x10     -- bit 4 = start of message
 -- Timing
 -- ============================================================================
 local POST_REPLY_DELAY = 0.02     -- seconds after reply before next request
-local REQUEST_TIMEOUT  = 1.00     -- seconds before retry
+local REQUEST_TIMEOUT  = 0.80     -- seconds without any reply frame before a request counts as lost
+local CHUNK_GAP        = 0.015    -- seconds between request chunks, so a multi-chunk request is not pushed in one burst
 local CONNECT_TIMEOUT  = 3.00     -- seconds without reply → disconnected
 local MAX_RETRIES      = 10
 local FC_DETECT_TIMEOUT = 5.0     -- seconds to wait for FC on one transport before trying next
@@ -211,6 +198,12 @@ local mspRxReq     = 0
 local mspRxVersion = 1    -- MSP version of current incoming message
 local mspStarted   = false
 local mspLastReq   = 0
+local lastRxFrameTime = 0
+local lastChunkTime   = 0
+
+-- Reply frames picked up by msp.stashFrames() during paint(), handled by poll() in arrival order
+local rxStash      = {}
+local RX_STASH_MAX = 64
 
 -- Duplicate-frame filter (SmartPort only)
 local prevSensorId, prevFrameId, prevDataId, prevValue
@@ -359,6 +352,8 @@ end
 --- XOR CRC is appended only for V1 over SmartPort.
 local function mspProcessTxQ()
     if #mspTxBuf == 0 then return false end
+    if clock() - lastChunkTime < CHUNK_GAP then return true end
+    local seq0, idx0, crc0 = mspSeq, mspTxIdx, mspTxCRC
     local versionBits = mspTxVersion == 2 and MSP_VERSION_V2 or MSP_VERSION_V1
     local frame = {}
     frame[1] = mspSeq + versionBits
@@ -376,8 +371,8 @@ local function mspProcessTxQ()
         end
         i = i + 1
     end
-    if i <= maxFramePayload then
-        -- Final chunk
+    local final = i <= maxFramePayload or (mspTxIdx > #mspTxBuf and not (mspTxVersion == 1 and transportType == TRANSPORT_SPORT))
+    if final then
         -- V1 SmartPort: append XOR CRC byte
         if mspTxVersion == 1 and transportType == TRANSPORT_SPORT then
             frame[i] = mspTxCRC
@@ -387,13 +382,19 @@ local function mspProcessTxQ()
         if transportType == TRANSPORT_SPORT then
             while i <= maxFramePayload do frame[i] = 0; i = i + 1 end
         end
-        rawSend(frame)
+    end
+    -- Ethos refuses a frame when its outgoing queue is full: keep it and send it on a later call
+    if rawSend(frame) == false then
+        mspSeq, mspTxIdx, mspTxCRC = seq0, idx0, crc0
+        return true
+    end
+    lastChunkTime = clock()
+    if final then
         mspTxBuf = {}
         mspTxIdx = 1
         mspTxCRC = 0
         return false
     end
-    rawSend(frame)
     return true
 end
 
@@ -404,10 +405,13 @@ end
 --- Queue an MSP request. Auto-selects V1 (cmd ≤ 254) or native V2 (cmd > 254).
 ---
 --- V1 TX buffer layout: [size(1), cmd(1), payload...]
---- V2 TX buffer layout: [flag(1), cmd_lo(1), cmd_hi(1), size_lo(1), size_hi(1), payload..., crc8(1)]
+--- V2 TX buffer layout: [flag(1), cmd_lo(1), cmd_hi(1), size_lo(1), size_hi(1), payload...]
 local function mspSendRequest(cmd, payload)
     if #mspTxBuf ~= 0 then return nil end
     payload = payload or {}
+    -- A half-assembled older reply must not complete and stand in for this request's reply
+    mspStarted = false
+    mspRxBuf = {}
 
     if cmd > 254 then
         -- ── Native MSPv2 (requires INAV ≥ 9.0 for telemetry transport) ──
@@ -417,17 +421,6 @@ local function mspSendRequest(cmd, payload)
         local cmdHi  = band(rshift(cmd, 8), 0xFF)
         local sizeLo = band(#payload, 0xFF)
         local sizeHi = band(rshift(#payload, 8), 0xFF)
-
-        -- DVB-S2 CRC over flag + cmd + size + payload
-        local crc = 0
-        crc = crc8_dvb_s2(crc, flag)
-        crc = crc8_dvb_s2(crc, cmdLo)
-        crc = crc8_dvb_s2(crc, cmdHi)
-        crc = crc8_dvb_s2(crc, sizeLo)
-        crc = crc8_dvb_s2(crc, sizeHi)
-        for i = 1, #payload do
-            crc = crc8_dvb_s2(crc, band(payload[i], 0xFF))
-        end
 
         local idx = 1
         mspTxBuf[idx] = flag;   idx = idx + 1
@@ -439,7 +432,7 @@ local function mspSendRequest(cmd, payload)
             mspTxBuf[idx] = band(payload[i], 0xFF)
             idx = idx + 1
         end
-        mspTxBuf[idx] = crc
+        -- No CRC byte: INAV's MSP over telemetry does not read one, and over S.Port it became a second chunk that cancelled the FC's reply
     else
         -- ── MSPv1 (works on all INAV versions) ──
         mspTxVersion = 1
@@ -554,8 +547,9 @@ end
 local function mspPollReply()
     if not rawPoll then return nil end
     while true do
-        local frame = rawPoll()
+        local frame = tremove(rxStash, 1) or rawPoll()
         if not frame then return nil end
+        lastRxFrameTime = clock()
         local result = mspReceivedReply(frame)
         if result then
             mspLastReq = 0
@@ -796,6 +790,7 @@ local function activateTransport()
     local t = transportCandidates[transportIdx]
     if not t then return false end
     sensor          = t.sensor
+    rxStash         = {}
     transportType   = t.type
     maxFramePayload = t.payload
     rawSend         = t.send
@@ -934,6 +929,7 @@ function msp.close()
     rawPoll             = nil
     transportCandidates = {}
     transportIdx        = 0
+    rxStash             = {}
     state               = STATE_OFF
     log("MSP", "Sensor released")
 end
@@ -985,7 +981,10 @@ function msp.poll()
                 end
             end
         end
-        if currentCmd and (now - lastReqTime) > REQUEST_TIMEOUT then
+        if currentCmd and (now - max(lastReqTime, lastChunkTime, lastRxFrameTime)) > REQUEST_TIMEOUT then
+            mspTxBuf = {}
+            mspTxIdx = 1
+            mspTxCRC = 0
             if client and currentCmd == clientCmd then
                 clientCmd = nil
                 client.onTimeout(currentCmd)
@@ -1147,6 +1146,17 @@ function msp.getState()
         navMode        = navMode,
         activeWpNumber = activeWpNumber,
     }
+end
+
+--- Pick up waiting reply frames without touching the MSP state, for use in paint().
+--- A long map draw otherwise lets Ethos drop them; poll() handles them later.
+function msp.stashFrames()
+    if not rawPoll then return end
+    while #rxStash < RX_STASH_MAX do
+        local frame = rawPoll()
+        if not frame then return end
+        rxStash[#rxStash + 1] = frame
+    end
 end
 
 --- Register (or clear with nil) the extra requester served in STATE_DONE.

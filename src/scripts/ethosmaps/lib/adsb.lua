@@ -42,7 +42,7 @@ adsb.CMD_COUNT   = MSP2_ADSB_VEHICLE_COUNT
 local WARN_POLL_IDLE_S   = 5.0
 local WARN_POLL_THREAT_S = 2.0
 local CONTACT_STALE_S    = 15.0
-local MAX_PROBE_TIMEOUTS = 3
+local MAX_PROBE_TIMEOUTS = 10   -- S.Port links can lose a few probes in a row
 local VEHICLE_REPLY_LEN  = 23
 local CALLSIGN_LEN       = 9
 
