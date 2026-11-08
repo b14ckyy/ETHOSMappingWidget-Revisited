@@ -53,6 +53,10 @@ local noMapBitmap = nil
 -- Loading sentinel – used while a tile is still queued/not-yet-loaded.
 local loadingBitmap = nil
 
+-- Tiles loaded without a file check, resolved while the loader is idle (verifyTile).
+local unverified      = {}
+local unverifiedCount = 0
+
 -- Two-bucket priority queue.  "High" tiles (near map center) are loaded first so the
 -- aircraft position appears sharp before the buffer fringe fills in.
 local highQueue    = {}   -- array of tile paths, consumed from highHead
@@ -130,10 +134,13 @@ local function loadFirstExisting(tilePath, ...)
   -- Probes candidate full file paths and loads the first one that exists on disk.
   local paths = { ... }
   for i = 1, #paths do
-    local bmp = tryLoadBitmap(paths[i])
-    if bmp ~= nil then
-      mapBitmapByPath[tilePath] = bmp
-      return bmp, paths[i]
+    -- loadBitmap accepts missing files and width() forces the decode, see helper/ETHOS-API-QUIRKS.md
+    if fileExists(paths[i]) then
+      local bmp = tryLoadBitmap(paths[i])
+      if bmp ~= nil then
+        mapBitmapByPath[tilePath] = bmp
+        return bmp, paths[i]
+      end
     end
   end
   return nil, nil
@@ -204,6 +211,10 @@ local function loadTileFromDisk(tilePath)
       local fastBmp = tryLoadBitmap(fastPath)
       if fastBmp ~= nil then
         mapBitmapByPath[tilePath] = fastBmp
+        if unverified[tilePath] == nil then
+          unverified[tilePath] = true
+          unverifiedCount = unverifiedCount + 1
+        end
         return fastBmp
       end
       -- Fast path miss for this tile -> fall through to full probe chain.
@@ -282,6 +293,23 @@ function tileLoader.getBitmap(tilePath)
   -- Cache-only read; returns nil when the tile has not been loaded yet.
   -- drawTiles() calls this so the paint path never touches the SD card.
   return mapBitmapByPath[tilePath]
+end
+
+function tileLoader.getUnverified()
+  -- Set of cached paths whose file was never confirmed; nil when there are none.
+  if unverifiedCount == 0 then return nil end
+  return unverified
+end
+
+function tileLoader.verifyTile(tilePath)
+  -- Swaps a missing tile for the placeholder. Only for tiles already drawn: width() forces the decode.
+  if unverified[tilePath] == nil then return end
+  unverified[tilePath] = nil
+  unverifiedCount = unverifiedCount - 1
+  local bmp = mapBitmapByPath[tilePath]
+  if bmp ~= nil and bmp:width() == 0 then
+    mapBitmapByPath[tilePath] = ensureNoMapBitmap()
+  end
 end
 
 function tileLoader.getNoMapBitmap()
@@ -407,6 +435,8 @@ function tileLoader.clearCache()
     mapBitmapByPath[k] = nil
   end
   mapBitmapByPath = {}
+  unverified      = {}
+  unverifiedCount = 0
   highQueue       = {}
   highQueueSet    = {}
   highHead        = 1
@@ -479,6 +509,10 @@ function tileLoader.trimCache(centerTileX, centerTileY, level, tilesX, tilesY, l
     if not keep[path] then
       mapBitmapByPath[path] = nil
       removed = removed + 1
+      if unverified[path] ~= nil then
+        unverified[path] = nil
+        unverifiedCount = unverifiedCount - 1
+      end
     end
   end
 

@@ -12,7 +12,7 @@ This guide covers everything about map tiles: supported providers and formats, f
 | **OSM** | Street | `z/x/y` | OpenStreetMap |
 | **MAPTILER** | Satellite, Hybrid, Street, Outdoor, Topo, Winter, OSM Style | `z/x/y` | Outdoor, Topo and Winter read well in daylight |
 
-Supported tile formats: **JPG**, **PNG**, **BMP** (24-bit). The widget auto-detects the format per tile.
+Supported tile formats: **JPG**, **PNG**, **BMP** (uncompressed, 16-bit RGB565 or 32-bit; 24-bit BMP is not displayed). The widget auto-detects the format per tile.
 
 ## Recommended Format
 
@@ -22,7 +22,7 @@ Supported tile formats: **JPG**, **PNG**, **BMP** (24-bit). The widget auto-dete
 | **Horus (STM32F4)** | X10, X10S, X10S Express, X12S | **JPG** or **BMP** |
 
 - **JPG** — Best balance of speed, quality, and storage. Up to 33% faster than PNG on H7 radios.
-- **BMP** (24-bit) — Zero CPU decode cost, but ~3× larger files. May outperform JPG on older F4 radios where software JPEG decoding is slower. Only practical for smaller map areas.
+- **BMP** (16-bit RGB565 recommended, 32-bit also works, both uncompressed) — Zero CPU decode cost, but larger files than JPG. May outperform JPG on older F4 radios where software JPEG decoding is slower. Only practical for smaller map areas.
 - **PNG** — Slowest decode performance. Existing PNG tiles continue to work, but prefer JPG for new downloads.
 
 ## Folder Structure

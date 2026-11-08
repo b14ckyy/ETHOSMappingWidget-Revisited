@@ -4,9 +4,12 @@ All notable changes to the ETHOS Mapping Widget, grouped by version. Trivial fix
 
 ---
 
-## Unreleased
+## 2.2.1 (2026-11-08)
 
 ### Fixed
+- **Settings loaded one slot off**: `mapZoomDefault` is stored as nil, and the legacy key fallback then read one extra slot, so every setting after it came back from the wrong position (vehicle symbol and trail resolution "???", wrong sensors, ADS-B Alert not persisted). Each key is now read exactly once. Values already saved in the wrong place are reset to defaults when no setting can hold them. Reading past the stored data after an update is now guarded against errors.
+- **PNG and BMP tiles not shown**: `lcd.loadBitmap()` returns an empty handle for a missing file, so the missing `.jpg` counted as loaded and `.bmp`, `.png` and Yaapu tiles were never tried. The tile format is now detected by checking which file exists, and visible tiles that turn out to be missing switch to the `nomap.png` placeholder once loading has finished (one per wakeup, only while the load queue is empty). The time-budgeted batch load is unchanged.
+- **BMP tile formats in the MapTilesGuide corrected**: ETHOS shows uncompressed 16-bit RGB565 and 32-bit BMP; 24-bit BMP is not displayed.
 - **ADS-B Alert over S.Port** (PR #50, MartinovEm): requests no longer cancel the FC's reply (no MSPv2 request CRC, no empty trailing chunk). A request frame that Ethos refuses is sent again, multi-chunk requests are paced, the reply assembly is reset on every request, and a request counts as lost after 0.8 s without a reply frame. Reply frames are also picked up during paint, so a long map draw no longer lets Ethos drop them; the MSP state is still handled in wakeup only.
 
 ---

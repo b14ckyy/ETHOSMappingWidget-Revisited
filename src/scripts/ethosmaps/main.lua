@@ -28,7 +28,7 @@ local tinsert, tremove, tconcat = table.insert, table.remove, table.concat
 local os_clock, os_time = os.clock, os.time
 
 -- Widget version string shown in the settings UI.  Bump on every release.
-local WIDGET_VERSION = "2.2.0"
+local WIDGET_VERSION = "2.2.1"
 
 -- Storage schema version.  Only bump this when storage keys are renamed,
 -- reordered, or changed in a way that makes old stored values unreadable.
@@ -1746,6 +1746,8 @@ local function wakeupInner(widget)
       if perfActive and tilesLoaded > 0 then
         perfInc("tiles_loaded", tilesLoaded)
       end
+    elseif mapLibs.mapLib then
+      mapLibs.mapLib.verifyNextVisibleTile()
     end
   end
 
@@ -1951,24 +1953,16 @@ local function applyDefault(value, defaultValue, lookup)
   return v
 end
 
-local function storageToConfig(name, defaultValue, lookup)
-  -- Reads a persisted setting from storage and normalizes it into the in-memory config format.
-  local storageValue = storage.read(name)
-  return applyDefault(storageValue, defaultValue, lookup)
+local function safeStorageRead(name)
+  -- Keys added in a newer version read past the stored data, see helper/ETHOS-API-QUIRKS.md
+  local ok, value = pcall(storage.read, name)
+  if ok then return value end
+  return nil
 end
 
-local function storageToConfigWithFallback(name, defaultValue, fallbackNames, lookup)
-  -- Reads a setting from primary storage key and falls back to legacy keys for backward compatibility.
-  local storageValue = storage.read(name)
-  if storageValue == nil and fallbackNames ~= nil then
-    for i=1,#fallbackNames do
-      storageValue = storage.read(fallbackNames[i])
-      if storageValue ~= nil then
-        break
-      end
-    end
-  end
-  return applyDefault(storageValue, defaultValue, lookup)
+local function storageToConfig(name, defaultValue, lookup)
+  -- Exactly one read per key: slots are positional, a second read shifts every later key.
+  return applyDefault(safeStorageRead(name), defaultValue, lookup)
 end
 
 local function configToStorage(value, lookup)
@@ -2938,6 +2932,35 @@ local function configure(widget)
 
 end
 
+local function sanitizeLoadedConfig(conf)
+  -- Builds before 2.2.1 could save values one slot off, see helper/ETHOS-API-QUIRKS.md
+  local function intRange(key, lo, hi, default)
+    local v = conf[key]
+    if type(v) ~= "number" or v ~= floor(v) or v < lo or v > hi then conf[key] = default end
+  end
+  intRange("mapZoomMin", 1, 20, 1)
+  intRange("mapZoomMax", 1, 20, 20)
+  if conf.mapZoomMin > conf.mapZoomMax or conf.mapZoomMin == 20 then
+    conf.mapZoomMin, conf.mapZoomMax = 1, 20
+  end
+  intRange("uavSymbol", 1, 3, 1)
+  intRange("zoomControl", 0, 2, 0)
+  intRange("zoomChannel", 0, 64, 0)
+  intRange("mapTrailHeadingThreshold", 3, 15, 5)
+  intRange("telemetrySourceMode", 1, 2, 1)
+  intRange("homeSource", 1, 2, 1)
+
+  local validTrail = { [0] = true, [20] = true, [50] = true, [100] = true, [500] = true, [1000] = true }
+  if not validTrail[conf.mapTrailResolution] then conf.mapTrailResolution = 50 end
+
+  local sourceKeys = { "linkQualitySource", "userSensor1", "userSensor2", "userSensor3",
+    "sensorGpsLat", "sensorGpsLon", "sensorHeading", "sensorSpeed", "homeSwitch" }
+  for i = 1, #sourceKeys do
+    local t = type(conf[sourceKeys[i]])
+    if t == "number" or t == "boolean" or t == "string" then conf[sourceKeys[i]] = nil end
+  end
+end
+
 local function read(widget)
   if not widget then return end
 
@@ -2945,7 +2968,7 @@ local function read(widget)
   -- v1.0 had no marker, so slot 0 holds horSpeedUnit (a small integer 1-4).
   -- v2.0 stored a version string like "2.0-dev3"; v2.1+ stores STORAGE_SCHEMA (integer).
   -- Extract the leading integer to unify both formats: "2.0-dev3"→2, 2→2, nil→nil.
-  local slot0 = storage.read("_settingsVersion")
+  local slot0 = safeStorageRead("_settingsVersion")
   local schema = tonumber(tostring(slot0 or ""):match("^(%d+)"))
 
   if schema ~= STORAGE_SCHEMA then
@@ -2975,9 +2998,9 @@ local function read(widget)
   mapStatus.conf.gpsFormat = storageToConfig("gpsFormat", 2)
   mapStatus.conf.mapProvider = storageToConfig("mapProvider", 2)
   mapStatus.conf.mapTypeId = storageToConfig("mapTypeId", 1)
-  mapStatus.conf.mapZoomDefault = storageToConfigWithFallback("mapZoomDefault", 18, {"googleZoomDefault", "gmapZoomDefault"})
-  mapStatus.conf.mapZoomMin = storageToConfigWithFallback("mapZoomMin", 1, {"googleZoomMin", "gmapZoomMin"})
-  mapStatus.conf.mapZoomMax = storageToConfigWithFallback("mapZoomMax", 20, {"googleZoomMax", "gmapZoomMax"})
+  mapStatus.conf.mapZoomDefault = storageToConfig("mapZoomDefault", 18)
+  mapStatus.conf.mapZoomMin = storageToConfig("mapZoomMin", 1)
+  mapStatus.conf.mapZoomMax = storageToConfig("mapZoomMax", 20)
   mapStatus.conf.enableDebugLog = storageToConfig("enableDebugLog", false)
   mapStatus.conf.enablePerfProfile = storageToConfig("enablePerfProfile", false)
   mapStatus.conf.uavSymbol = storageToConfig("uavSymbol", 1)
@@ -2998,6 +3021,7 @@ local function read(widget)
   mapStatus.conf.homeSource = storageToConfig("homeSource", 1)
   mapStatus.conf.homeSwitch = storageToConfig("homeSwitch", nil)
   mapStatus.conf.adsbEnabled = storageToConfig("adsbEnabled", false)
+  sanitizeLoadedConfig(mapStatus.conf)
 
   -- Restore runtime state from file (observation marker, default position, zoom level).
   local state = readStateFile()

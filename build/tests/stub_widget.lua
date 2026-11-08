@@ -105,5 +105,63 @@ if not logText:find("implausible jump dropped", 1, true) then
   print("FAIL interval-gated GPS_FILT log never written (now - 0 >= interval failed: time source broken?)")
   fails = fails + 1
 end
+
+-- Positional storage as on the radio: read() ignores the key, nil slots exist.
+local KEYS = { "_settingsVersion", "horSpeedUnit", "vertSpeedUnit", "distUnit", "distUnitLong", "gpsFormat",
+  "mapProvider", "mapTypeId", "mapZoomDefault", "mapZoomMin", "mapZoomMax", "enableDebugLog", "enablePerfProfile",
+  "uavSymbol", "zoomControl", "zoomChannel", "mapTrailResolution", "mapTrailHeadingThreshold", "linkQualitySource",
+  "userSensor1", "userSensor2", "userSensor3", "telemetrySourceMode", "sensorGpsLat", "sensorGpsLon", "sensorHeading",
+  "sensorSpeed", "wpDownload", "homeSource", "homeSwitch", "adsbEnabled" }
+
+local function roundTrip(stored, used, throwPastEnd)
+  local reads, written = 0, {}
+  storage = {
+    read = function()
+      reads = reads + 1
+      if reads > used then
+        if throwPastEnd then error("Read error") end
+        return nil
+      end
+      return stored[reads]
+    end,
+    write = function(k, v) written[k] = v end,
+  }
+  widgetDef.read(w)
+  widgetDef.write(w)
+  return reads, written
+end
+
+local function expect(name, got, want)
+  if got ~= want then
+    print(string.format("FAIL %s: got %s, want %s", name, tostring(got), tostring(want)))
+    fails = fails + 1
+  end
+end
+
+local good = { 2, 2, 2, 2, 2, 1, 2, 1, nil, 3, 18, false, false, 2, 1, 7, 100, 9, nil, nil, nil, nil, 2, nil, nil, nil, nil, true, 2, nil, true }
+local reads, out = roundTrip(good, #KEYS)
+expect("one read per key with nil mapZoomDefault", reads, #KEYS)
+for i, k in ipairs(KEYS) do
+  if k ~= "mapZoomDefault" and k ~= "mapTypeId" and k ~= "mapProvider" then expect("round trip " .. k, out[k], good[i]) end
+end
+
+-- What 2.1/2.2 saved after reading one slot off.
+local shifted = { 2, 1, 1, 1, 1, 2, 2, nil, nil, 20, 20, false, true, 0, 0, 50, 5, 5, nil, nil, nil, 1, 1, nil, nil, nil, false, true, 0, false, false }
+reads, out = roundTrip(shifted, #KEYS)
+expect("shifted zoomMin", out.mapZoomMin, 1)
+expect("shifted zoomMax", out.mapZoomMax, 20)
+expect("shifted uavSymbol", out.uavSymbol, 1)
+expect("shifted trail", out.mapTrailResolution, 50)
+expect("shifted userSensor3", out.userSensor3, nil)
+expect("shifted homeSource", out.homeSource, 1)
+expect("shifted homeSwitch", out.homeSwitch, nil)
+
+-- Model saved by 2.1: the three newest keys are not stored, a firmware may raise instead of returning nil.
+reads, out = roundTrip(good, 28, true)
+expect("upgrade reads all keys", reads, #KEYS)
+expect("upgrade homeSource default", out.homeSource, 1)
+expect("upgrade adsbEnabled default", out.adsbEnabled, false)
+expect("upgrade keeps trail", out.mapTrailResolution, 100)
+
 print(fails == 0 and "STUB RUN PASSED" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

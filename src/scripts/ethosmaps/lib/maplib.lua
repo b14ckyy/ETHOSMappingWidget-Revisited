@@ -211,6 +211,23 @@ function mapLib.getProtectedTilePaths()
   return paths
 end
 
+--- Loader idle step: validates one visible tile per call, see helper/ETHOS-API-QUIRKS.md
+--- Visible tiles only: cache-zone tiles are not decoded yet and width() would cost bitmap RAM.
+function mapLib.verifyNextVisibleTile()
+  local pending = libs.tileLoader.getUnverified()
+  if pending == nil then return end
+  for ctx in pairs(vpCtxRegistry) do
+    local ctxTiles = ctx.tiles
+    for i = 1, #ctxTiles do
+      local p = ctxTiles[i]
+      if p and pending[p] then
+        libs.tileLoader.verifyTile(p)
+        return
+      end
+    end
+  end
+end
+
 local DIRECTIONAL_LEAD_TILES = 1
 local DIRECTIONAL_LEAD_MIN_SPEED = 1.5
 local DIRECTIONAL_LEAD_OFFSET_THRESHOLD = 90
